@@ -1,0 +1,12 @@
+{
+    "name": "VirtualKeyboard",
+    "tree": {
+        "$className": "DataModel",
+        "ServerScriptService": {
+            "$className": "ServerScriptService",
+            "VirtualKeyboard": {
+                "$path": "./src"
+            }
+        }
+    }
+}

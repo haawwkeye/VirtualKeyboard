@@ -1,0 +1,5398 @@
+<roblox version="4">
+  <Item class="ModuleScript" referent="0">
+    <Properties>
+      <string name="Name">VirtualKeyboard</string>
+      <string name="Source"><![CDATA[--!nonstrict
+-- VirtualKeyboard.lua --
+-- Written by Kip Turner, copyright ROBLOX 2016 --
+
+
+local CoreGui = game:GetService('CoreGui')
+local RunService = game:GetService('RunService')
+local UserInputService = game:GetService('UserInputService')
+local GuiService = game:GetService('GuiService')
+local HttpService = game:GetService('HttpService')
+local ContextActionService = game:GetService('ContextActionService')
+local PlayersService = game:GetService('Players')
+local SoundService = game:GetService('SoundService')
+local TextService = game:GetService('TextService')
+local VRService = game:GetService("VRService");
+
+local RobloxGui = PlayersService.LocalPlayer.PlayerGui--CoreGui:WaitForChild("RobloxGui")
+local Util = require(script.Utility)
+
+local BACKGROUND_OPACITY = 0.3
+local NORMAL_KEY_COLOR = Color3.new(49/255,49/255,49/255)
+local HOVER_KEY_COLOR = Color3.new(49/255,49/255,49/255)
+local PRESSED_KEY_COLOR = Color3.new(0,162/255,1)
+local SET_KEY_COLOR = Color3.new(0,162/255,1)
+
+local KEY_TEXT_COLOR = Color3.new(1,1,1)
+---------------------------------------- KEYBOARD LAYOUT --------------------------------------
+local MINIMAL_KEYBOARD_LAYOUT = HttpService:JSONDecode([==[
+[
+  [
+    {
+      "a": 7,
+      "w": 0.8
+    },
+    "*",
+    "Q",
+    "W",
+    "E",
+    "R",
+    "T",
+    "Y",
+    "U",
+    "I",
+    "O",
+    "P",
+    {
+      "w": 1.8
+    },
+    "Delete"
+  ],
+  [
+    {
+      "w": 1.6
+    },
+    "Caps",
+    "A",
+    "S",
+    "D",
+    "F",
+    "G",
+    "H",
+    "J",
+    "K",
+    "L",
+    "?",
+    {
+      "h": 2,
+      "w2": 2.4,
+      "h2": 1,
+      "x2": -1.4,
+      "y2": 1
+    },
+    "Enter"
+  ],
+  [
+    {
+      "w": 2.2
+    },
+    "Shift",
+    "Z",
+    "X",
+    "C",
+    "V",
+    "B",
+    "N",
+    "M",
+    "."
+  ],
+  [
+    {
+      "w": 2.2
+    },
+    "123/sym",
+    {
+      "w": 8
+    },
+    "",
+    {
+      "w": 2.4
+    },
+    "<Speaker>"
+  ]
+]
+]==])
+
+local MINIMAL_KEYBOARD_LAYOUT_SYMBOLS = HttpService:JSONDecode([==[
+[
+  [
+    {
+      "a": 7,
+      "w": 0.8
+    },
+    "*",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "0",
+    {
+      "w": 1.8
+    },
+    "Delete"
+  ],
+  [
+    {
+      "w": 1.6
+    },
+    "!",
+    "@",
+    "#",
+    "$",
+    "%",
+    "^",
+    "&",
+    "(",
+    ")",
+    "=",
+    "?",
+    {
+      "h": 2,
+      "w2": 2.4,
+      "h2": 1,
+      "x2": -1.4,
+      "y2": 1
+    },
+    "Enter"
+  ],
+  [
+    {
+      "w": 1.2
+    },
+    "/",
+    "-",
+    "+",
+    "_",
+    ":",
+    ";",
+    "'",
+    "\"",
+    ",",
+    "."
+  ],
+  [
+    {
+      "w": 2.2
+    },
+    "abc",
+    {
+      "w": 8
+    },
+    "",
+    {
+      "w": 2.4
+    },
+    "<Speaker>"
+  ]
+]
+]==])
+
+
+---------------------------------------- END KEYBOARD LAYOUT --------------------------------------
+
+-- Kinda like a hack to force send a message ig???
+local function sendChatMessage(textbox)
+	local StarterGui = game:GetService('StarterGui')
+	local A = false
+	local ChatBar = textbox;
+	A = StarterGui:GetCore('ChatActive')
+	StarterGui:SetCore('ChatActive', true)
+	ChatBar:CaptureFocus()
+	ChatBar.Text = textbox.Text;
+	ChatBar.TextEditable = false
+	task.wait()
+	ChatBar:ReleaseFocus(true)
+	ChatBar.TextEditable = true
+	task.wait()
+	StarterGui:SetCore('ChatActive', A)
+end
+
+
+local VOICE_STATUS_CODE_ENUM = {}
+do
+	local STATUS_CODES =
+		{
+			'ASR_STATUS_OK',
+			'ASR_STATUS_CANCELLED',
+			'ASR_STATUS_UNKNOWN',
+			'ASR_STATUS_INVALID_ARGUMENTS',
+			'ASR_STATUS_DEADLINE_EXCEEDED',
+			'ASR_STATUS_NOT_FOUND',
+			'ASR_STATUS_ALREADY_EXISTS',
+			'ASR_STATUS_PERMISSION_DENIED',
+			'ASR_STATUS_UNAUTHENTICATED',
+			'ASR_STATUS_RESOURCE_EXHAUSTED',
+			'ASR_STATUS_FAILED_PRECONDITION',
+			'ASR_STATUS_ABORTED',
+			'ASR_STATUS_OUT_OF_RANGE',
+			'ASR_STATUS_UNIMPLEMENTED',
+			'ASR_STATUS_INTERNAL',
+			'ASR_STATUS_UNAVAILABLE',
+			'ASR_STATUS_DATA_LOSS',
+			-- last official google response
+
+			-- Roblox statuses
+			'ASR_STATUS_NOT_ENABLED',
+			'ASR_STATUS_LOW_CONFIDENCE',
+			'ASR_STATUS_INVALID_JSON'
+		};
+
+	for i, code in pairs(STATUS_CODES) do
+		VOICE_STATUS_CODE_ENUM[code] = i-1
+	end
+end
+
+local function tokenizeString(str, tokenChar)
+	local words = {}
+	for word in string.gmatch(str, '([^' .. tokenChar .. ']+)') do
+		table.insert(words, word)
+	end
+	return words
+end
+
+local function ConvertFontSizeEnumToInt(fontSizeEnum)
+	local result = string.match(fontSizeEnum.Name, '%d+')
+	return (result and tostring(result)) or 12
+end
+
+
+-- RayPlaneIntersection
+
+-- http://www.siggraph.org/education/materials/HyperGraph/raytrace/rayplane_intersection.htm
+local function RayPlaneIntersection(ray, planeNormal, pointOnPlane)
+	planeNormal = planeNormal.unit
+	ray = ray.Unit
+	-- compute Pn (dot) Rd = Vd and check if Vd == 0 then we know ray is parallel to plane
+	local Vd = planeNormal:Dot(ray.Direction)
+
+	-- could fuzzy equals this a little bit to account for imprecision or very close angles to zero
+	if Vd == 0 then -- parallel, no intersection
+		return nil
+	end
+
+	local V0 = planeNormal:Dot(pointOnPlane - ray.Origin)
+	local t = V0 / Vd
+
+	if t < 0 then --plane is behind ray origin, and thus there is no intersection
+		return nil
+	end
+
+	return ray.Origin + ray.Direction * t
+end
+
+function Clamp(low, high, input)
+	return math.max(low, math.min(high, input))
+end
+
+-- No rotation as of yet
+local function PointInGuiObject(object, x, y)
+	local minPt = object.AbsolutePosition
+	local maxPt = object.AbsolutePosition + object.AbsoluteSize
+	if minPt.X <= x and maxPt.X >= x and minPt.Y <= y and maxPt.Y >= y then
+		return true
+	end
+	return false
+end
+
+local function FindAncestorOfType(object, ancestorType)
+	if not object then return nil end
+
+	local parent = object.Parent
+	if parent and  parent:IsA(ancestorType) then
+		return parent
+	end
+
+	return FindAncestorOfType(parent, ancestorType)
+end
+
+local function ExtendedInstance(instance)
+	local this = {}
+	do
+		local mt =
+			{
+				__index = function (t, k)
+					return instance[k]
+				end;
+
+				__newindex = function (t, k, v)
+					instance[k] = v
+				end;
+			}
+		setmetatable(this, mt)
+	end
+	return this
+end
+
+local function CreateVRButton(instance)
+	local newButton = ExtendedInstance(instance)
+
+	rawset(newButton, "OnEnter", function(self)
+	end)
+	rawset(newButton, "OnLeave", function(self)
+	end)
+	rawset(newButton, "OnDown", function(self)
+	end)
+	rawset(newButton, "OnUp", function(self)
+	end)
+	rawset(newButton, "ContainsPoint", function(self, x, y)
+		return PointInGuiObject(instance, x, y)
+	end)
+	rawset(newButton, "Update", function(self)
+	end)
+
+	return newButton
+end
+
+local selectionRing = Util:Create'ImageLabel'
+{
+	Name = 'SelectionRing';
+	Size = UDim2.new(1, -6, 1, -6);
+	Position = UDim2.new(0, 4, 0, 3);
+	Image = 'rbxasset://textures/ui/menu/buttonHover.png';
+	ScaleType = Enum.ScaleType.Slice;
+	SliceCenter = Rect.new(94/2, 94/2, 94/2, 94/2);
+	BackgroundTransparency = 1;
+}
+
+local KEY_ICONS =
+	{
+		["<Speaker>"] = {Asset = "rbxasset://textures/ui/Keyboard/mic_icon.png", AspectRatio = 0.615};
+	}
+
+local function CreateKeyboardKey(keyboard, layoutData, keyData)
+	local isSpecialShapeKey = layoutData['width2'] and layoutData['height2'] and layoutData['x2'] and layoutData['y2']
+
+	local newKeyElement = Util:Create'ImageButton'
+	{
+		Name = keyData[1];
+		Position = UDim2.new(layoutData['x'], 0, layoutData['y'], 0);
+		Size = UDim2.new(layoutData['width'], 0, layoutData['height'], 0);
+		BorderSizePixel = 0;
+		Image = "";
+		BackgroundTransparency = 1;
+		ZIndex = 1;
+	}
+	local keyText = Util:Create'TextLabel'
+	{
+		Name = "KeyText";
+		Text = keyData[#keyData];
+		Position = UDim2.new(0, -10, 0, -10);
+		Size = UDim2.new(1, 0, 1, 0);
+		Font = Enum.Font.SourceSansBold;
+		FontSize = Enum.FontSize.Size96;
+		TextColor3 = KEY_TEXT_COLOR;
+		BackgroundTransparency = 1;
+		Selectable = true;
+		ZIndex = 2;
+		Parent = newKeyElement;
+	}
+	local backgroundImage = Util:Create'Frame'
+	{
+		Name = 'KeyBackground';
+		Size = UDim2.new(1,-10,1,-10);
+		Position = UDim2.new(0,-5,0,-5);
+		BackgroundColor3 = NORMAL_KEY_COLOR;
+		BackgroundTransparency = BACKGROUND_OPACITY;
+		BorderSizePixel = 0;
+		Parent = newKeyElement;
+	}
+
+	local selectionObject = Util:Create'ImageLabel'
+	{
+		Name = 'SelectionObject';
+		Size = UDim2.new(1,0,1,0);
+		BackgroundTransparency = 1;
+		Image = "rbxasset://textures/ui/Keyboard/key_selection_9slice.png";
+		ImageTransparency = 0;
+		ScaleType = Enum.ScaleType.Slice;
+		SliceCenter = Rect.new(12,12,52,52);
+		BorderSizePixel = 0;
+	}
+
+	newKeyElement.SelectionImageObject = Util:Create'ImageLabel'
+	{
+		Visible = false;
+	}
+
+	-- Special silly enter key nonsense
+	local secondBackgroundImage = nil
+	local specialSelectionObject, specialSelectionObject2, specialSelectionObject3 = nil, nil, nil
+	if isSpecialShapeKey then
+		secondBackgroundImage = Util:Create'ImageButton'
+		{
+			Name = 'KeyBackground';
+			Position = UDim2.new(layoutData['x2'] / layoutData['width'], -5, layoutData['y2'] / layoutData['height'], -5);
+			Size = UDim2.new(layoutData['width2'] / layoutData['width'], 0, layoutData['height2'] / layoutData['height'], -10);
+			BackgroundColor3 = NORMAL_KEY_COLOR;
+			BackgroundTransparency = BACKGROUND_OPACITY;
+			BorderSizePixel = 0;
+			AutoButtonColor = false;
+			SelectionImageObject = newKeyElement.SelectionImageObject;
+			Parent = newKeyElement;
+		}
+		if layoutData['x2'] <= 0 then
+			keyText.Size = secondBackgroundImage.Size - UDim2.new(0,10,0,0)
+			keyText.Position = secondBackgroundImage.Position
+			secondBackgroundImage.Size = secondBackgroundImage.Size - UDim2.new(1,0,0,0)
+		end
+
+		do
+			specialSelectionObject = Util:Create'Frame'
+			{
+				Name = 'SpecialSelectionObject';
+				Size = UDim2.new(1,0,0.5,0);
+				Position = UDim2.new(0,0,0.5,0);
+				BackgroundTransparency = 1;
+				ClipsDescendants = true;
+				Util:Create'ImageLabel'
+				{
+					Name = 'Borders';
+					Position = UDim2.new(-1,0,-1,0);
+					Size = UDim2.new(2,0,2,0);
+					BackgroundTransparency = 1;
+					Image = "rbxasset://textures/ui/Keyboard/key_selection_9slice.png";
+					ImageTransparency = 0;
+					ScaleType = Enum.ScaleType.Slice;
+					SliceCenter = Rect.new(12,12,52,52);
+				};
+			}
+			specialSelectionObject2 = specialSelectionObject:Clone()
+			specialSelectionObject2.Size = UDim2.new(1,0,0.5,5)
+			specialSelectionObject2.Position = UDim2.new(0,0,0,0)
+			specialSelectionObject2.Borders.Size = UDim2.new(1,0,1,30)
+			specialSelectionObject2.Borders.Position = UDim2.new(0,0,0,0)
+
+			specialSelectionObject3 = specialSelectionObject:Clone()
+			specialSelectionObject3.Size = UDim2.new(1,5,1,0)
+			specialSelectionObject3.Position = UDim2.new(0,0,0,0)
+			specialSelectionObject3.Borders.Size = UDim2.new(1,30,1,0)
+			specialSelectionObject3.Borders.Position = UDim2.new(0,0,0,0)
+		end
+		-- End of nonsense
+	end
+
+	local newKey = CreateVRButton(newKeyElement)
+
+	local hovering = false
+	local pressed = false
+	local isAlpha = #keyData == 1 and type(keyData[1]) == 'string' and #keyData[1] == 1 and
+		string.byte(keyData[1]) >= string.byte("A") and string.byte(keyData[1]) <= string.byte("z")
+
+	local icon = nil
+	if keyData[1] and KEY_ICONS[keyData[1]] then
+		keyText.Visible = false
+		icon = Util:Create'ImageLabel'
+		{
+			Name = 'KeyIcon';
+			Size = UDim2.new(KEY_ICONS[keyData[1]].AspectRatio, -20, 1, -20);
+			SizeConstraint = Enum.SizeConstraint.RelativeYY;
+			BackgroundTransparency = 1;
+			Image = KEY_ICONS[keyData[1]].Asset;
+			Parent = backgroundImage;
+		}
+
+		local function onChanged(prop)
+			if prop == 'AbsoluteSize' then
+				icon.Position = UDim2.new(0.5,-icon.AbsoluteSize.X/2,0.5,-icon.AbsoluteSize.Y/2);
+			end
+		end
+		icon.Changed:connect(onChanged)
+		onChanged('AbsoluteSize')
+	end
+
+	local function onClicked()
+		local keyValue = nil
+		local currentKeySetting = newKey:GetCurrentKeyValue()
+
+		if currentKeySetting == 'Shift' then
+			keyboard:SetShift(not keyboard:GetShift())
+		elseif currentKeySetting == 'Caps' then
+			keyboard:SetCaps(not keyboard:GetCaps())
+		elseif currentKeySetting == 'Enter' then
+			keyboard:SubmitText(true, true)
+		elseif currentKeySetting == 'Delete' then
+			keyboard:BackspaceAtCursor()
+		elseif currentKeySetting == "123/sym" then
+			keyboard:SetCurrentKeyset(2)
+		elseif currentKeySetting == "abc" then
+			keyboard:SetCurrentKeyset(1)
+		elseif currentKeySetting == "<Speaker>" then
+			keyboard:SetVoiceMode(true)
+		elseif currentKeySetting == 'Tab' then
+			keyValue = '\t'
+		else
+			keyValue = currentKeySetting
+		end
+
+		if keyValue ~= nil then
+			keyboard:SubmitCharacter(keyValue, isAlpha)
+		end
+	end
+
+	local function setKeyColor(newColor, hovering)
+		backgroundImage.BackgroundColor3 = newColor
+		if secondBackgroundImage then
+			secondBackgroundImage.BackgroundColor3 = newColor
+		end
+		if isSpecialShapeKey then
+			specialSelectionObject.Parent = hovering and backgroundImage or nil
+			specialSelectionObject2.Parent = hovering and backgroundImage or nil
+			specialSelectionObject3.Parent = hovering and secondBackgroundImage or nil
+		else
+			selectionObject.Parent = hovering and backgroundImage or nil
+		end
+	end
+
+	local function update()
+		local currentKey = newKey:GetCurrentKeyValue()
+
+		if pressed then
+			setKeyColor(PRESSED_KEY_COLOR, false)
+		elseif hovering then
+			setKeyColor(HOVER_KEY_COLOR, true)
+		elseif currentKey == 'Caps' and keyboard:GetCaps() then
+			setKeyColor(SET_KEY_COLOR, false)
+		elseif currentKey == 'Shift' and keyboard:GetShift() then
+			setKeyColor(SET_KEY_COLOR, false)
+		elseif currentKey == 'abc' then
+			setKeyColor(SET_KEY_COLOR, false)
+		else
+			setKeyColor(NORMAL_KEY_COLOR, false)
+		end
+
+		if icon then
+			icon.ImageTransparency = 0.5
+		end
+
+		keyText.Text = newKey:GetCurrentKeyValue()
+	end
+
+	local hoveringGuiElements = {}
+
+	rawset(newKey, "OnEnter", function(self)
+		hovering = true
+		update()
+	end)
+	rawset(newKey, "OnLeave", function(self)
+		if not next(hoveringGuiElements) then
+			hovering = false
+			pressed = false
+			update()
+		end
+	end)
+	rawset(newKey, "OnDown", function(self)
+		if pressed then return end;
+		pressed = true
+		update()
+		-- Fire the onclick when pressing down on the button;
+		-- pressing down and up on the same button is difficult
+		-- in VR because your head is constantly moving around
+		onClicked()
+	end)
+	rawset(newKey, "OnUp", function(self)
+		pressed = false
+		update()
+	end)
+	rawset(newKey, "GetCurrentKeyValue", function(self)
+		local shiftEnabled = keyboard:GetShift()
+		local capsEnabled = keyboard:GetCaps()
+
+		if isAlpha then
+			if capsEnabled and shiftEnabled then
+				return string.lower(keyData[#keyData])
+			elseif capsEnabled or shiftEnabled then
+				return keyData[1]
+			else
+				return string.lower(keyData[#keyData])
+			end
+		end
+
+		if shiftEnabled then
+			return keyData[1]
+		end
+
+		return keyData[#keyData]
+	end)
+	rawset(newKey, "ContainsPoint", function(self, x, y)
+		return PointInGuiObject(backgroundImage, x, y) or
+			(secondBackgroundImage and PointInGuiObject(secondBackgroundImage, x, y))
+	end)
+	rawset(newKey, "Update", function(self)
+		update()
+	end)
+	rawset(newKey, "GetInstance", function(self)
+		return newKeyElement
+	end)
+
+	newKeyElement.MouseButton1Down:connect(function() newKey:OnDown() end)
+	newKeyElement.MouseButton1Up:connect(function() newKey:OnUp() end)
+	newKeyElement.SelectionGained:connect(function() hoveringGuiElements[newKeyElement] = true newKey:OnEnter() end)
+	newKeyElement.SelectionLost:connect(function() hoveringGuiElements[newKeyElement] = nil newKey:OnLeave() end)
+	-- For the time being, we will simulate onClick events in the OnDown() event
+	-- newKeyElement.MouseButton1Click:connect(function() onClicked() end)
+	if secondBackgroundImage then
+		-- For the time being, we will simulate onClick events in the OnDown() event
+		-- secondBackgroundImage.MouseButton1Click:connect(onClicked)
+		secondBackgroundImage.MouseButton1Down:connect(function() newKey:OnDown() end)
+		secondBackgroundImage.MouseButton1Up:connect(function() newKey:OnUp() end)
+		secondBackgroundImage.SelectionGained:connect(function()
+			hoveringGuiElements[secondBackgroundImage] = true
+			newKey:OnEnter()
+		end)
+		secondBackgroundImage.SelectionLost:connect(function()
+			hoveringGuiElements[secondBackgroundImage] = nil
+			newKey:OnLeave()
+		end)
+	end
+
+	update()
+
+	return newKey
+end
+
+local function CreateBaseVoiceState()
+	local this = {}
+	this.Name = "Base"
+
+	function this:TransitionFrom()
+	end
+	function this:TransitionTo()
+	end
+
+	return this
+end
+
+local function CreateListeningVoiceState()
+	local this = CreateBaseVoiceState()
+
+	this.Name = "Listening"
+
+	function this:TransitionTo()
+		pcall(function() SoundService:BeginRecording() end)
+	end
+
+	return this
+end
+
+local function CreateProcessingVoiceState()
+	local this = CreateBaseVoiceState()
+
+	this.Name = "Processing"
+
+	local finished = false
+	local result = nil
+
+	function this:TransitionTo()
+		coroutine.wrap(function()
+			pcall(function() result = SoundService:EndRecording() end)
+			finished = true
+		end)()
+	end
+
+	function this:GetResultAsync()
+		while not finished do
+			wait()
+		end
+		return result
+	end
+
+	return this
+end
+
+local function CreateWaitingVoiceState()
+	local this = CreateBaseVoiceState()
+
+	this.Name = "Waiting"
+
+	return this
+end
+
+local VoiceTransitions = {Listening = {Processing = true}, Processing = {Waiting = true}, Waiting = {Listening = true}}
+
+local VoiceToTextFSM = {}
+do
+	VoiceToTextFSM.CurrentState = CreateWaitingVoiceState()
+
+	local stateTransitionedSignal = Instance.new('BindableEvent')
+
+	function VoiceToTextFSM:TransitionState(newState)
+		-- If it is a new state then lets cleanup and activate it
+		if VoiceTransitions[self.CurrentState.Name][newState.Name] then
+			self.CurrentState:TransitionFrom()
+			self.CurrentState = newState
+			self.CurrentState:TransitionTo()
+			stateTransitionedSignal:Fire(self.CurrentState)
+			return true
+		end
+		return false
+	end
+
+	function VoiceToTextFSM:GetCurrentState()
+		return self.CurrentState
+	end
+
+	VoiceToTextFSM.StateTransitionedEvent = stateTransitionedSignal.Event
+end
+
+
+
+local function ConstructKeyboardUI(keyboardLayoutDefinitions)
+	--local KeyboardSurface : SurfaceGui = RobloxGui:FindFirstChild("VR_Keyboard");
+	--if KeyboardSurface then KeyboardSurface:Destroy() end;
+	--KeyboardSurface = Instance.new("SurfaceGui", RobloxGui);
+	--KeyboardSurface.Name = "VR_Keyboard";
+	--KeyboardSurface.AlwaysOnTop = true;
+	--KeyboardSurface.Enabled = false;
+	
+	local Panel3D = require(script.Panel3D)
+	local panel = Panel3D.Get("Keyboard")
+	panel:SetVisible(false)
+	--KeyboardGui = panel:GetGUI()
+	
+	--KeyboardSurface.Adornee = panel;
+	--KeyboardGui = KeyboardSurface;
+
+	local buttons = {}
+
+	local keyboardContainer = Util:Create'Frame'
+	{
+		Name = 'VirtualKeyboard';
+		Size = UDim2.new(1, 0, 1, 0);
+		Position = UDim2.new(0, 0, 0, 0);
+		BackgroundTransparency = 1;
+		Active = true;
+		Visible = false;
+	};
+
+	local textEntryBackground = Util:Create'ImageLabel'
+	{
+		Name = 'TextEntryBackground';
+		Size = UDim2.new(0.5,0,0.125,0);
+		Position = UDim2.new(0.25,0,0,0);
+		Image = "";
+		BackgroundTransparency = 0.5;
+		BackgroundColor3 = Color3.new(31/255,31/255,31/255);
+		BorderSizePixel = 0;
+		ClipsDescendants = true;
+		Parent = keyboardContainer;
+	}
+	local textfieldBackground = Util:Create'Frame'
+	{
+		Name = 'TextfieldBackground';
+		Position = UDim2.new(0,2,0,2);
+		Size = UDim2.new(1, -4, 1, -4);
+		BackgroundTransparency = 0;
+		BackgroundColor3 = Color3.new(209/255,216/255,221/255);
+		BorderSizePixel = 0;
+		Visible = true;
+		Parent = textEntryBackground;
+	};
+	local textEntryField = Util:Create'TextButton'
+	{
+		Name = "TextEntryField";
+		Text = "";
+		Position = UDim2.new(0,4,0,4);
+		Size = UDim2.new(1, -8, 1, -8);
+		Font = Enum.Font.SourceSans;
+		FontSize = Enum.FontSize.Size60;
+		TextXAlignment = Enum.TextXAlignment.Left;
+		BackgroundTransparency = 1;
+		BorderSizePixel = 0;
+		Parent = textfieldBackground;
+	}
+	local textfieldCursor = Util:Create'Frame'
+	{
+		Name = 'TextfieldCursor';
+		Size = UDim2.new(0, 5, 0.9, 0);
+		Position = UDim2.new(0, 0, 0.05, 0);
+		BackgroundTransparency = 0;
+		BackgroundColor3 = SET_KEY_COLOR;
+		BorderSizePixel = 0;
+		Visible = true;
+		ZIndex = 2;
+		Parent = textEntryField;
+	};
+
+	local closeButtonElement = Util:Create'ImageButton'
+	{
+		Name = 'CloseButton';
+		Size = UDim2.new(0.075,-10,0.198,-10);
+		Position = UDim2.new(0,-5,0,-35);
+		Image = "rbxasset://textures/ui/Keyboard/close_button_background.png";
+		BackgroundTransparency = 1;
+		AutoButtonColor = false;
+		Parent = keyboardContainer;
+	}
+	do
+		closeButtonElement.SelectionImageObject = Util:Create'ImageLabel'
+		{
+			Name = 'Selection';
+			Size = UDim2.new(0.9,0,0.9,0);
+			Position = UDim2.new(0.05,0,0.05,0);
+			Image = "rbxasset://textures/ui/Keyboard/close_button_selection.png";
+			BackgroundTransparency = 1;
+		}
+		Util:Create'ImageLabel'
+		{
+			Name = 'Icon';
+			Size = UDim2.new(0.5,0,0.5,0);
+			Position = UDim2.new(0.25,0,0.25,0);
+			Image = "rbxasset://textures/ui/Keyboard/close_button_icon.png";
+			BackgroundTransparency = 1;
+			Parent = closeButtonElement;
+		}
+	end
+	local closeButton = CreateVRButton(closeButtonElement)
+	table.insert(buttons, closeButton)
+
+	local voiceRecognitionContainer = Util:Create'Frame'
+	{
+		Name = 'VoiceRecognitionContainer';
+		Size = UDim2.new(1, 0, 0.85, 0);
+		Position = UDim2.new(0, 0, 0.15, 0);
+		BackgroundTransparency = 1;
+		Active = true;
+		Visible = false;
+		Parent = keyboardContainer;
+	};
+	do
+		local voiceRecognitionBackground1 = Util:Create'Frame'
+		{
+			Name = 'voiceRecognitionBackground1';
+			Size = UDim2.new(1, 0, 0.75, 0);
+			Position = UDim2.new(0, 0, 0, 0);
+			BackgroundColor3 = NORMAL_KEY_COLOR;
+			BackgroundTransparency = BACKGROUND_OPACITY;
+			BorderSizePixel = 0;
+			Active = true;
+			Parent = voiceRecognitionContainer;
+		};
+		local voiceRecognitionBackground2 = voiceRecognitionBackground1:Clone()
+		voiceRecognitionBackground2.Size = UDim2.new(1 - 0.2, 0, 0.25, 0)
+		voiceRecognitionBackground2.Position = UDim2.new(0, 0, 0.75, 0)
+		voiceRecognitionBackground2.Parent = voiceRecognitionContainer
+	end
+
+	local voiceDoneButton = CreateVRButton(Util:Create'TextButton'
+		{
+			Name = 'DoneButton';
+			Size = UDim2.new(0.2, -5, 0.25, -5);
+			Position = UDim2.new(1 - 0.2, 5, 0.75, 5);
+			Text = "Done";
+			BackgroundColor3 = SET_KEY_COLOR;
+			Font = Enum.Font.SourceSansBold;
+			FontSize = Enum.FontSize.Size96;
+			TextColor3 = KEY_TEXT_COLOR;
+			BackgroundTransparency = 0;
+			AutoButtonColor = false;
+			BorderSizePixel = 0;
+			Parent = voiceRecognitionContainer;
+		})
+	table.insert(buttons, voiceDoneButton)
+
+	local voiceProcessingStatus = Util:Create'TextLabel'
+	{
+		Name = 'VoiceProcessingStatus';
+		Size = UDim2.new(0, 0, 0, 0);
+		Position = UDim2.new(0.5, 0, 0.33, 0);
+		Text = "";
+		Font = Enum.Font.SourceSansBold;
+		FontSize = Enum.FontSize.Size96;
+		TextColor3 = KEY_TEXT_COLOR;
+		BackgroundTransparency = 1;
+		BorderSizePixel = 0;
+		Parent = voiceRecognitionContainer;
+	}
+
+	local function CreateVoiceVisualizerWidget()
+		local this = {}
+
+		local bars = {}
+
+		local numOfBars = 50
+		local numOfWaves = 4
+		local waveSpeed = 2.5
+
+		local container = Util:Create'Frame'
+		{
+			Name = 'VoiceVisualizerContainer';
+			Size = UDim2.new(1, 0, 1, 0);
+			BackgroundTransparency = 1;
+		}
+		this.Container = container
+
+		for i = 1, numOfBars do
+			local bar = Util:Create'Frame'
+			{
+				Name = 'Bar';
+				Size = UDim2.new(1/numOfBars, -4, 1, 0);
+				Position = UDim2.new(i/numOfBars, 0, 0, 0);
+				BackgroundTransparency = 0;
+				BackgroundColor3 = KEY_TEXT_COLOR;
+				Parent = container;
+			}
+			table.insert(bars, bar)
+		end
+
+		function this:StartAnimation()
+			RunService:UnbindFromRenderStep("VoiceVisualizerWidget")
+			RunService:BindToRenderStep("VoiceVisualizerWidget", Enum.RenderPriority.First.Value,
+				function()
+					local movementPerBar = (numOfWaves*2*math.pi) / numOfBars
+					for i, bar in pairs(bars) do
+						local height = math.abs(math.sin(tick() * waveSpeed + i * movementPerBar)) + math.abs(math.cos(tick() * waveSpeed + i * movementPerBar))
+						height = ((height / 2) - 0.3) * (1/(1-0.3))
+						bar.Size = UDim2.new(1/numOfBars, -4, height, 0)
+						bar.Position = UDim2.new(i/numOfBars, 0, (1-height) / 2, 0)
+					end
+				end)
+		end
+
+		function this:StopAnimation()
+			RunService:UnbindFromRenderStep("VoiceVisualizerWidget")
+		end
+
+		return this
+	end
+
+	local voiceVisualizer = CreateVoiceVisualizerWidget()
+	voiceVisualizer.Container.Parent = voiceRecognitionContainer
+	voiceVisualizer.Container.Size = UDim2.new(0.5,0,0.4,0)
+	voiceVisualizer.Container.Position = UDim2.new(0.25,0,0.4,0)
+
+	local newKeyboard = ExtendedInstance(keyboardContainer)
+
+	local keyboardOptions = nil
+	local keysets = {}
+
+	local capsLockEnabled = false
+	local shiftEnabled = false
+
+	local textfieldCursorPosition = 0
+
+	local openedEvent = Instance.new('BindableEvent')
+	local closedEvent = Instance.new('BindableEvent')
+	local opened = false
+
+	local function SetTextFieldCursorPosition(newPosition)
+		textfieldCursorPosition = Clamp(0, #textEntryField.Text, newPosition)
+		if not textEntryField.TextFits then
+			textfieldCursorPosition = #textEntryField.Text
+		end
+
+		local textSize = TextService:GetTextSize(
+			string.sub(textEntryField.Text, 1, textfieldCursorPosition),
+			ConvertFontSizeEnumToInt(textEntryField.FontSize),
+			textEntryField.Font,
+			textEntryField.AbsoluteSize)
+		textfieldCursor.Position = UDim2.new(0, textSize.x, textfieldCursor.Position.Y.Scale, textfieldCursor.Position.Y.Offset)
+	end
+
+	local function UpdateTextEntryFieldText(newText)
+		textEntryField.Text = newText
+		SetTextFieldCursorPosition(textfieldCursorPosition)
+	end
+
+	local buffer = ""
+	local function getBufferText()
+		if keyboardOptions and keyboardOptions.TextBox then
+			return keyboardOptions.TextBox.Text
+		end
+		return buffer
+	end
+	local function setBufferText(newBufferText)
+		if keyboardOptions and keyboardOptions.TextBox then
+			keyboardOptions.TextBox.Text = newBufferText
+		elseif buffer ~= newBufferText then
+			buffer = newBufferText
+			UpdateTextEntryFieldText(buffer)
+		end
+	end
+
+	local function calculateTextCursorPosition(x, y)
+		x = x - textEntryField.AbsolutePosition.x
+		y = y - textEntryField.AbsolutePosition.y
+
+		for i = 1, #textEntryField.Text do
+			local textSize = TextService:GetTextSize(
+				string.sub(textEntryField.Text, 1, i),
+				ConvertFontSizeEnumToInt(textEntryField.FontSize),
+				textEntryField.Font,
+				textEntryField.AbsoluteSize)
+			if textSize.x > x then
+				return i - 1
+			end
+		end
+
+		return #textEntryField.Text
+	end
+
+	local currentKeyset = nil
+
+	rawset(newKeyboard, "OpenedEvent",  openedEvent.Event)
+	rawset(newKeyboard, "ClosedEvent",  closedEvent.Event)
+
+	rawset(newKeyboard, "GetCurrentKeyset", function(self)
+		return keysets[currentKeyset]
+	end)
+
+	rawset(newKeyboard, "SetCurrentKeyset", function(self, newKeyset)
+		if newKeyset ~= currentKeyset and keysets[newKeyset] ~= nil then
+			if keysets[currentKeyset] and keysets[currentKeyset].container then
+				keysets[currentKeyset].container.Visible = false
+			end
+
+			currentKeyset = newKeyset
+
+			if keysets[currentKeyset] and keysets[currentKeyset].container then
+				keysets[currentKeyset].container.Visible = true
+			end
+		end
+	end)
+
+	rawset(newKeyboard, "SetVoiceMode", function(self, inVoiceMode)
+		-- current Speech to Text solution is no longer enabled. If we find a new service provider we can hook it up through here
+		inVoiceMode = false  
+
+		local currentKeysetObject = self:GetCurrentKeyset()
+		if currentKeysetObject and currentKeysetObject.container then
+			currentKeysetObject.container.Visible = not inVoiceMode
+		end
+
+		voiceRecognitionContainer.Visible = inVoiceMode
+
+		if inVoiceMode then
+			VoiceToTextFSM:TransitionState(CreateListeningVoiceState())
+		end
+	end)
+
+	rawset(newKeyboard, "GetCaps", function(self)
+		return capsLockEnabled
+	end)
+
+	rawset(newKeyboard, "SetCaps", function(self, newCaps)
+		capsLockEnabled = newCaps
+		for _, key in pairs(self:GetCurrentKeyset().keys) do
+			key:Update()
+		end
+	end)
+
+	rawset(newKeyboard, "GetShift", function(self)
+		return shiftEnabled
+	end)
+
+	rawset(newKeyboard, "SetShift", function(self, newShift)
+		shiftEnabled = newShift
+		for _, key in pairs(self:GetCurrentKeyset().keys) do
+			key:Update()
+		end
+	end)
+
+	local ignoreFocusedLost = false
+
+	local textChangedConn = nil
+	local textBoxFocusLostConn = nil
+	local panelClosedConn = nil
+
+	local function disconnectKeyboardEvents()
+		if textChangedConn then textChangedConn:disconnect() end
+		textChangedConn = nil
+		if textBoxFocusLostConn then textBoxFocusLostConn:disconnect() end
+		textBoxFocusLostConn = nil
+		if panelClosedConn then panelClosedConn:disconnect() end
+		panelClosedConn = nil
+	end
+
+	rawset(newKeyboard, "Open", function(self, options)
+		if opened then return end
+		opened = true
+
+		keyboardOptions = options
+
+		self:SetCurrentKeyset(1)
+		self:SetVoiceMode(false)
+		keyboardContainer.Visible = true
+
+		panel:ResizeStuds(5.9, 2.25, 320)
+
+		local localCF = CFrame.new()
+
+		disconnectKeyboardEvents()
+		if options.TextBox then
+			textChangedConn = options.TextBox.Changed:connect(function(prop)
+				if prop == 'Text' then
+					UpdateTextEntryFieldText(options.TextBox.Text)
+				end
+			end)
+			textBoxFocusLostConn = options.TextBox.FocusLost:connect(function(submitted)
+				--if not ignoreFocusedLost then
+				if submitted == true then
+					self:Close(submitted)
+				end
+			end)
+			if options.TextBox.ClearTextOnFocus then
+				setBufferText("")
+			else
+				UpdateTextEntryFieldText(options.TextBox.Text)
+			end
+
+			-- Find panel for 2d ui?
+			local textboxPanel = Panel3D.FindContainerOf(options.TextBox)
+			if textboxPanel then
+				panelClosedConn = Panel3D.OnPanelClosed.Event:connect(function(closedPanelName)
+					if closedPanelName == textboxPanel.name then
+						self:Close(false)
+					end
+				end)
+
+				local textboxPosition = options.TextBox.AbsolutePosition + (Vector2.new(0.5, 1) * options.TextBox.AbsoluteSize)
+				local panelCF = textboxPanel:GetCFrameInCameraSpace()
+				localCF = panelCF * CFrame.new(textboxPanel:GetGuiPositionInPanelSpace(textboxPosition)) * CFrame.new(0, -panel.height * 0.65, 0.5) * CFrame.Angles(math.rad(-22.5), 0, 0)
+			else -- no panel!
+				local headForwardCF = Panel3D.GetHeadLookXZ(true)
+				localCF = headForwardCF * CFrame.Angles(math.rad(22.5), 0, 0) * CFrame.new(0, -1, -5)
+			end
+		else
+			setBufferText("")
+		end
+	
+		ContextActionService:BindActionAtPriority("VirtualKeyboardControllerInput",
+			function(actionName, inputState, inputObject)
+				if inputState == Enum.UserInputState.End then
+					if inputObject.KeyCode == Enum.KeyCode.ButtonL1 then
+						SetTextFieldCursorPosition(textfieldCursorPosition - 1)
+					elseif inputObject.KeyCode == Enum.KeyCode.ButtonR1 then
+						SetTextFieldCursorPosition(textfieldCursorPosition + 1)
+					elseif inputObject.KeyCode == Enum.KeyCode.ButtonX then
+						self:BackspaceAtCursor()
+					elseif inputObject.KeyCode == Enum.KeyCode.ButtonY then
+						self:SubmitCharacter(" ", false)
+					elseif inputObject.KeyCode == Enum.KeyCode.ButtonL2 then
+						if currentKeyset then
+							-- Go to the next keyset
+							self:SetCurrentKeyset((currentKeyset % #keysets) + 1)
+						end
+					elseif inputObject.KeyCode == Enum.KeyCode.ButtonL3 then
+						self:SetCaps(not self:GetCaps())
+					elseif inputObject.KeyCode == Enum.KeyCode.ButtonB then
+						self:Close(false)
+					end
+				end
+			end,
+			false,
+			3000,
+			Enum.KeyCode.ButtonL1, Enum.KeyCode.ButtonR1, Enum.KeyCode.ButtonL2, Enum.KeyCode.ButtonL3, Enum.KeyCode.ButtonX, Enum.KeyCode.ButtonY, Enum.KeyCode.ButtonR2, Enum.KeyCode.ButtonB)
+
+		self.Parent = panel:GetGUI()
+		
+		panel:SetCanFade(false)
+		panel:SetVisible(true, true)
+		panel:ForceShowUntilLookedAt()
+		
+		-- Taken from NexusVRCore BaseScreenGui and ScreenGui3D
+		local Easing = 0;
+		local LastRotation = CFrame.new();
+		local RotationOffset = CFrame.new();
+		local Depth = 5;
+		
+		function panel:PreUpdate(cameraCF : CFrame, cameraRenderCF : CFrame, userHeadCF : CFrame, lookRay : Ray, DeltaTime)
+			DeltaTime = DeltaTime or self.Easing
+			
+			--Update the rotation.
+			local TargetCFrame = CFrame.new(lookRay.Direction*1.5) * CFrame.new(Vector3.new(0,panel.height * 0.65,0));
+			if Easing == 0 then
+				LastRotation = TargetCFrame
+			else
+				LastRotation = LastRotation:Lerp(TargetCFrame, DeltaTime / Easing)
+			end
+			
+			--Set the CFrame
+			panel:SetType(Panel3D.Type.NewStandard, { CFrame = LastRotation * RotationOffset; })
+		end
+
+		openedEvent:Fire()
+	end)
+
+	rawset(newKeyboard, "Close", function(self, submit)
+		submit = (submit == true)
+
+		if not opened then return end
+		opened = false
+		
+		function panel:PreUpdate(cameraCF, cameraRenderCF, userHeadCF, lookRay, dt)
+			
+		end
+		
+		disconnectKeyboardEvents()
+
+		ContextActionService:UnbindAction("VirtualKeyboardControllerInput")
+		-- Clean-up
+		panel:OnMouseLeave()
+		panel:SetVisible(false, true)
+		keyboardContainer.Visible = false
+
+		Panel3D.Get("Topbar3D"):SetVisible(true)
+
+		self:SubmitText(submit, false)
+		closedEvent:Fire()
+	end)
+
+	rawset(newKeyboard, "SubmitText", function(self, submit, keepKeyboardOpen)
+		local keyboardTextbox = keyboardOptions and keyboardOptions.TextBox
+		if keyboardTextbox then
+			if keyboardTextbox.Name == "ChatBar" then sendChatMessage(keyboardTextbox); return; end
+			if submit then
+				keyboardTextbox.Text = getBufferText()
+			end
+			-- Only keep text boxes open for coreguis, such as chat
+			local textboxPanel = Panel3D.FindContainerOf(keyboardTextbox)
+			local reopenKeyboard = keepKeyboardOpen and textboxPanel and textboxPanel.linkedTo == panel
+
+			if reopenKeyboard then
+				ignoreFocusedLost = true
+			end
+
+			keyboardTextbox:ReleaseFocus(submit)
+
+			if reopenKeyboard then
+				keyboardTextbox:CaptureFocus()
+				ignoreFocusedLost = false
+			end
+		end
+	end)
+
+	rawset(newKeyboard, "GetCurrentOptions", function(self)
+		return keyboardOptions
+	end)
+
+	rawset(newKeyboard, "BackspaceAtCursor", function(self)
+		if textfieldCursorPosition >= 1 then
+			local bufferText = getBufferText()
+			local newBufferText = string.sub(bufferText, 1, textfieldCursorPosition - 1) .. string.sub(bufferText, textfieldCursorPosition + 1, #bufferText)
+			local newCursorPosition = textfieldCursorPosition - 1
+			setBufferText(newBufferText)
+			SetTextFieldCursorPosition(newCursorPosition)
+		end
+	end)
+
+	rawset(newKeyboard, "SubmitCharacter", function(self, character, isAnAlphaKey)
+		local bufferText = getBufferText()
+		local newBufferText = string.sub(bufferText, 1, textfieldCursorPosition) .. character .. string.sub(bufferText, textfieldCursorPosition + 1, #bufferText)
+		setBufferText(newBufferText)
+		SetTextFieldCursorPosition(textfieldCursorPosition + #character)
+		
+		--print(character, isAnAlphaKey, "old:", bufferText, "new:", newBufferText)
+		
+		if isAnAlphaKey and self:GetShift() then
+			self:SetShift(false)
+		end
+	end)
+
+	do -- Parse input definition
+		for _, keyboardKeyset in pairs(keyboardLayoutDefinitions) do
+			local keys = {}
+			local keyboardSizeConstrainer = Util:Create'Frame'
+			{
+				Name = 'KeyboardSizeConstrainer';
+				Size = UDim2.new(1, 0, 1, -20);
+				Position = UDim2.new(0, 0, 0, 20);
+				BackgroundTransparency = 1;
+				Parent = keyboardContainer;
+			};
+
+			local maxWidth = 0
+			local maxHeight = 0
+			local y = 0
+			for rowNum, rowData in pairs(keyboardKeyset) do
+				local x = 0
+				local width = 1
+				local height = 1
+				local width2, height2, x2, y2;
+				for columnNum, columnData in pairs(rowData) do
+					if type(columnData) == 'table' then
+						if columnData['w'] then width = columnData['w'] end
+						if columnData['h'] then height = columnData['h'] end
+						if columnData['x'] then x = x + columnData['x'] end
+						if columnData['y'] then y = y + columnData['y'] end
+						if columnData['x2'] then x2 = columnData['x2'] end
+						if columnData['y2'] then y2 = columnData['y2'] end
+						if columnData['w2'] then width2 = columnData['w2'] end
+						if columnData['h2'] then height2 = columnData['h2'] end
+					elseif type(columnData) == 'string' then
+						if columnData == "" then
+							columnData = " "
+						end
+						-- put key
+						local key = CreateKeyboardKey(
+							newKeyboard,
+							{x = x, y = y, width = width, height = height, x2 = x2, y2 = y2, width2 = width2, height2 = height2},
+							tokenizeString(columnData, '\n'))
+						table.insert(keys, key)
+
+						x = x + width
+						maxWidth = math.max(maxWidth, x)
+						maxHeight = math.max(maxHeight, y + height)
+						-- reset for the next key
+						width = 1
+						height = 1
+						width2, height2, x2, y2 = nil, nil, nil, nil
+					end
+				end
+				y = y + 1
+			end
+
+			-- Fix the positions and sizes to fit in our KeyboardContainer
+			for _, element in pairs(keys) do
+				element.Position = UDim2.new(element.Position.X.Scale / maxWidth, 0, element.Position.Y.Scale / maxHeight, 0)
+				element.Size = UDim2.new(element.Size.X.Scale / maxWidth, 0, element.Size.Y.Scale / maxHeight, 0)
+				element.Parent = keyboardSizeConstrainer
+			end
+
+			keyboardSizeConstrainer.SizeConstraint = Enum.SizeConstraint.RelativeXX
+			keyboardSizeConstrainer.Size = UDim2.new(1, 0, -maxHeight / maxWidth, 0)
+			keyboardSizeConstrainer.Position = UDim2.new(0, 0, 1, 0)
+			keyboardSizeConstrainer.Visible = false
+
+			table.insert(keysets, {keys = keys, container = keyboardSizeConstrainer})
+		end
+		newKeyboard:SetCurrentKeyset(1)
+	end
+
+	textEntryField.MouseButton1Click:connect(function()
+		SetTextFieldCursorPosition(calculateTextCursorPosition(panel.lookAtPixel.X, panel.lookAtPixel.Y))
+	end)
+
+	closeButton.MouseButton1Click:connect(function()
+		newKeyboard:Close(false)
+	end)
+
+	voiceDoneButton.MouseButton1Click:connect(function()
+		if VoiceToTextFSM:GetCurrentState().Name == "Listening" then
+			VoiceToTextFSM:TransitionState(CreateProcessingVoiceState())
+		end
+	end)
+
+	local function onVoiceProcessingStateChanged(newState)
+		if newState.Name == "Listening" then
+			voiceProcessingStatus.Text = "Listening..."
+		elseif newState.Name == "Processing" then
+			voiceProcessingStatus.Text = "Processing..."
+		elseif newState.Name == "Waiting" then
+			voiceProcessingStatus.Text = "Done"
+		end
+
+		-- Get the result and put it into the textfield
+		if newState.Name == "Processing" then
+			coroutine.wrap(function()
+				voiceVisualizer:StopAnimation()
+				local result = newState:GetResultAsync()
+				if result and result["Status"] == VOICE_STATUS_CODE_ENUM.ASR_STATUS_OK  then
+					setBufferText(result["Response"])
+				else
+					voiceProcessingStatus.Text = "An error occurred, please try again."
+					wait(2)
+				end
+				VoiceToTextFSM:TransitionState(CreateWaitingVoiceState())
+			end)()
+		elseif newState.Name == "Listening" then
+			voiceVisualizer:StartAnimation()
+		elseif newState.Name == "Waiting" then
+			newKeyboard:SetVoiceMode(false)
+		end
+	end
+	VoiceToTextFSM.StateTransitionedEvent:connect(onVoiceProcessingStateChanged)
+	onVoiceProcessingStateChanged(VoiceToTextFSM:GetCurrentState())
+
+
+	return newKeyboard
+end
+
+
+local Keyboard = nil;
+local function GetKeyboard()
+	if Keyboard == nil then
+		Keyboard = ConstructKeyboardUI({MINIMAL_KEYBOARD_LAYOUT, MINIMAL_KEYBOARD_LAYOUT_SYMBOLS})
+	end
+	return Keyboard
+end
+
+
+
+local VirtualKeyboardClass = {}
+
+function VirtualKeyboardClass:CreateVirtualKeyboardOptions(textbox)
+	local keyboardOptions = {}
+
+	keyboardOptions.TextBox = textbox
+
+	return keyboardOptions
+end
+
+local VirtualKeyboardPlatform = true
+function VirtualKeyboardClass:ShowVirtualKeyboard(virtualKeyboardOptions)
+	if VirtualKeyboardPlatform and UserInputService.VREnabled then
+		GetKeyboard():Open(virtualKeyboardOptions)
+		--if (KeyboardGui) then
+		--	KeyboardGui.Enabled = true;
+		--end
+	end
+end
+
+function VirtualKeyboardClass:CloseVirtualKeyboard()
+	if VirtualKeyboardPlatform and UserInputService.VREnabled then
+		local currentKeyboard = GetKeyboard()
+		currentKeyboard:Close(false)
+		--if (KeyboardGui) then
+		--	KeyboardGui.Enabled = false;
+		--end
+	end
+end
+
+VirtualKeyboardClass.OpenedEvent = GetKeyboard().OpenedEvent
+VirtualKeyboardClass.ClosedEvent = GetKeyboard().ClosedEvent
+
+
+if VirtualKeyboardPlatform then
+	UserInputService.TextBoxFocused:connect(function(textbox)
+		VirtualKeyboardClass:ShowVirtualKeyboard(VirtualKeyboardClass:CreateVirtualKeyboardOptions(textbox))
+	end)
+	-- Don't have to hook up to TextBoxFocusReleased because we are already listening to that in keyboard
+end
+
+return VirtualKeyboardClass
+]]></string>
+    </Properties>
+    <Item class="Folder" referent="1">
+      <Properties>
+        <string name="Name">VirtualKeyboard</string>
+      </Properties>
+      <Item class="ModuleScript" referent="2">
+        <Properties>
+          <string name="Name">Panel3D</string>
+          <string name="Source"><![CDATA[--!nonstrict
+--Panel3D: 3D GUI panels for VR
+--written by 0xBAADF00D
+--revised/refactored 5/11/16
+--updated 2021/2022 by MetaVars for new VR system
+
+local UserInputService = game:GetService("UserInputService")
+local VRService = game:GetService("VRService")
+local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
+local CoreGui = game:GetService("CoreGui")
+
+--local CoreGuiModules = RobloxGui:WaitForChild("Modules")
+local Players = game:GetService("Players")
+local RobloxGui = Players.LocalPlayer.PlayerGui
+local Utility = require(script.Parent.Utility)
+local GamepadService = game:GetService("GamepadService")
+local VRUtil = require(script.Parent.VRUtil)
+local CorePackages = game:GetService("CorePackages")
+
+local EngineFeatureEnableVRUpdate3 = true--game:GetEngineFeature("EnableVRUpdate3")
+local FFlagVRLetRaycastsThroughUI = true--require(CoreGuiModules.Flags.FFlagVRLetRaycastsThroughUI)
+local GetFFlagUIBloxVRApplyHeadScale = true--require(CorePackages.Workspace.Packages.SharedFlags).UIBlox.GetFFlagUIBloxVRApplyHeadScale
+
+--Panel3D State variables
+local renderStepName = "Panel3DRenderStep-" .. game:GetService("HttpService"):GenerateGUID()
+local defaultPixelsPerStud = 64
+local pointUpCF = CFrame.Angles(math.rad(-90), math.rad(180), 0)
+local zeroVector = Vector3.new(0, 0, 0)
+local zeroVector2 = Vector2.new(0, 0)
+local fullyOpaqueAtPixelsFromEdge = 10
+local fullyTransparentAtPixelsFromEdge = 20
+local partThickness = 0.2
+
+--The default origin CFrame offset for new panels
+local standardOriginCF = CFrame.new(0, -0.5, -5.5)
+local newStandardOriginCF = CFrame.new(0, 0, -3)
+
+--Compensates for the thickness of the panel part and rotates it so that
+--the front face is pointing back at the camera
+local panelAdjustCF = CFrame.new(0, 0, -0.5 * partThickness) * CFrame.Angles(0, math.pi, 0) 
+
+local cursorHidden = false
+local cursorHideTime = 2.5
+local cursorSize = 3
+
+local lerpSpeed = 4
+
+local currentModal = nil
+local lastModal = nil
+local currentMaxDist = math.huge
+local currentClosest = nil
+local currentCursorParent = nil
+local currentCursorPos = zeroVector2
+local lastClosest = nil
+local panels = {}
+local floorRotation = CFrame.new()
+local cursor = Utility:Create "ImageLabel" {
+	Image = "rbxasset://textures/Cursors/Gamepad/Pointer.png",
+	ImageColor3 = Color3.new(0, 1, 0),
+	BackgroundTransparency = 1,
+	ZIndex = 1e9
+}
+local partFolder = workspace.CurrentCamera:WaitForChild("VRCorePanelParts")
+local effectFolder = workspace.CurrentCamera:WaitForChild("VRCoreEffectParts");
+partFolder:WaitForChild("Keyboard")
+pcall(function()
+	GuiService.CoreGuiFolder = partFolder
+	GuiService.CoreEffectFolder = effectFolder
+end)
+--End of Panel3D State variables
+
+
+--Panel3D Declaration and enumerations
+local Panel3D = {}
+Panel3D.Type = {
+	None = 0,
+	Standard = 1,
+	Fixed = 2,
+	HorizontalFollow = 3,
+	FixedToHead = 4,
+	NewStandard = 5,
+	WristView = 6,
+	PositionLocked = 7,
+}
+
+Panel3D.OnPanelClosed = Utility:Create 'BindableEvent' {
+	Name = 'OnPanelClosed'
+}
+
+function Panel3D.GetHeadLookXZ(withTranslation)
+	local userHeadCF = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+	local headLook = userHeadCF.lookVector
+	local headYaw = math.atan2(-headLook.Z, headLook.X) - math.rad(90)
+	local cf = CFrame.Angles(0, headYaw, 0)
+
+	if withTranslation then
+		cf = cf + userHeadCF.p
+	end
+	return cf
+end
+
+function Panel3D.FindContainerOf(element)
+	for _, panel in pairs(panels) do
+		if panel.gui and panel.gui:IsAncestorOf(element) then
+			return panel
+		end
+		for _, subpanel in pairs(panel.subpanels) do
+			if subpanel.gui and subpanel.gui:IsAncestorOf(element) then
+				return panel
+			end
+		end
+	end
+	return nil
+end
+
+function Panel3D.SetModalPanel(panel)
+	if currentModal == panel then
+		return
+	end
+	if currentModal then
+		currentModal:OnModalChanged(false)
+	end
+	if panel then
+		panel:OnModalChanged(true)
+	end
+	lastModal = currentModal
+	currentModal = panel
+end
+
+function Panel3D.RaycastOntoPanel(part, parentGui, gui, ray)
+	local partSize = part.Size
+	local partThickness = partSize.Z
+	local partWidth = partSize.X
+	local partHeight = partSize.Y
+
+	local planeCF = part:GetRenderCFrame()
+	local planeNormal = planeCF.lookVector
+	local pointOnPlane = planeCF.p + (planeNormal * partThickness * 0.5)
+
+	--Find where the view ray intersects with the plane in world space
+	local worldIntersectPoint = Utility:RayPlaneIntersection(ray, planeNormal, pointOnPlane)
+	if worldIntersectPoint then
+		local parentGuiWidth, parentGuiHeight = parentGui.AbsoluteSize.X, parentGui.AbsoluteSize.Y
+		--now figure out where that intersection point was in the panel's local space
+		--and then flip the X axis because the plane is looking back at you (panel's local +X is to the left of the camera)
+		--and then offset it by half of the panel's size in X and -Y to move 0,0 to the upper-left of the panel.
+		local localIntersectPoint = planeCF:pointToObjectSpace(worldIntersectPoint) * Vector3.new(-1, 1, 1)
+			+ Vector3.new(partWidth / 2, -partHeight / 2, 0)
+		--now scale it into the gui space on the panel's surface
+		local lookAtPixel = Vector2.new(
+			(localIntersectPoint.X / partWidth) * parentGuiWidth,
+			(localIntersectPoint.Y / partHeight) * -parentGuiHeight
+		)
+
+		--fire mouse enter/leave events if necessary
+		local lookX, lookY = lookAtPixel.X, lookAtPixel.Y
+		local guiX, guiY = gui.AbsolutePosition.X, gui.AbsolutePosition.Y
+		local guiWidth, guiHeight = gui.AbsoluteSize.X, gui.AbsoluteSize.Y
+		local isOnGui = false
+
+		if parentGui.Enabled then
+			if lookX >= guiX and lookX <= guiX + guiWidth and lookY >= guiY and lookY <= guiY + guiHeight then
+				isOnGui = true
+			end
+		end
+
+		return worldIntersectPoint, localIntersectPoint, lookAtPixel, isOnGui
+	else
+		return nil, nil, nil, false
+	end
+end
+
+--End of Panel3D Declaration and enumerations
+
+--Panel class implementation
+local Panel = {}
+Panel.__index = Panel
+function Panel.new(name)
+	local self = {}
+	self.name = name
+
+	self.part = false
+	self.gui = false
+
+	self.width = 1
+	self.height = 1
+
+	self.isVisible = false
+	self.isEnabled = false
+	self.panelType = Panel3D.Type.None
+	self.pixelScale = 1
+	self.showCursor = true
+	self.canFade = true
+	self.shouldFindLookAtGuiElement = false
+	self.ignoreModal = false
+	self.needsPositionUpdate = false
+	self.alwaysUpdatePosition = false
+
+	self.linkedTo = false
+	self.subpanels = {}
+
+	self.transparency = 0
+	self.forceShowUntilLookedAt = false
+	self.forceShowUntilTick = 0
+	self.isLookedAt = false
+	self.isWristHeldUp = false
+	self.isOffscreen = true
+	self.lookAtPixel = Vector2.new(-1, -1)
+	self.cursorPos = Vector2.new(-1, -1)
+	self.lookAtDistance = math.huge
+	self.lookAtGuiElement = false
+	self.isClosest = true
+
+	self.localCF = CFrame.new()
+	self.angleFromHorizon = false
+	self.angleFromForward = false
+	self.distance = 0
+
+	self.lerpTime = 0
+	self.lerpInitialCF = nil
+	self.lerpScaleSize = Vector2.new(0,0)
+	self.lerpInitialSize = Vector2.new(0,0)
+
+	self.FollowView = true
+	self.LastFollowCF = nil
+
+	--self.wristLockPosition = false
+	self.wristTargetPosition = Vector3.new()
+
+	if panels[name] then
+		error("A panel by the name of " .. name .. " already exists.")
+	end
+	panels[name] = self
+
+	return setmetatable(self, Panel)
+end
+
+--Panel accessor methods
+function Panel:GetPart()
+	if not self.part then
+		self.part = Utility:Create("Part")({
+			Name = self.name,
+			Parent = partFolder,
+
+			Transparency = 1,
+
+			CanCollide = false,
+			CanTouch = if FFlagVRLetRaycastsThroughUI then false else nil,
+			Anchored = true,
+
+			Size = Vector3.new(1, 1, partThickness),
+		})
+	end
+	return self.part
+end
+
+function Panel:GetGUI()
+	if not self.gui then
+		local part = self:GetPart()
+		self.gui = Utility:Create("SurfaceGui")({
+			Parent = RobloxGui,
+			Name = self.name,
+			Archivable = false,
+			Adornee = part,
+			Active = true,
+			ToolPunchThroughDistance = 1000,
+			CanvasSize = self.CanvasSize or Vector2.new(1000, 1000),
+			Enabled = self.isEnabled,
+			AlwaysOnTop = true,
+		})
+	end
+	return self.gui
+end
+
+function Panel:FindHoveredGuiElement(elements)
+	local x, y = self.lookAtPixel.X, self.lookAtPixel.Y
+	for i, v in pairs(elements) do
+		local minPt = v.AbsolutePosition
+		local maxPt = v.AbsolutePosition + v.AbsoluteSize
+		if minPt.X <= x and maxPt.X >= x and minPt.Y <= y and maxPt.Y >= y then
+			return v, i
+		end
+	end
+end
+--End of panel accessor methods
+
+--Panel update methods
+function Panel:SetPartCFrame(cframe)
+	self:GetPart().CFrame = cframe * panelAdjustCF
+end
+
+function Panel:SetEnabled(enabled)
+	if self.isEnabled == enabled then
+		return
+	end
+
+	self.isEnabled = enabled
+	if enabled then
+		self:GetPart().Parent = partFolder
+		self:GetGUI().Enabled = true
+		for i, v in pairs(self.subpanels) do
+			v:SetEnabled(v:GetEnabled())
+		end
+	else
+		self:GetPart().Parent = nil
+		self:GetGUI().Enabled = false
+		for i, v in pairs(self.subpanels) do
+			v:SetEnabled(v:GetEnabled())
+		end
+	end
+
+	self:OnEnabled(enabled)
+end
+
+function Panel:StartLerp(scaleSize)
+	-- this starts a linear interpolation of the position and size of the panel
+	self.lerpInitialCF = self:GetPart().CFrame * CFrame.new(0, -1.5, 0)
+	self.lerpTime = 1
+	self.lerpInitialSize = Vector2.new(self.width, self.height)
+	self.lerpScaleSize = scaleSize and scaleSize or Vector2.new(0,0)
+end
+
+function Panel:EvaluatePositioning(cameraCF, cameraRenderCF, userHeadCF, dt)
+	if self.panelType == Panel3D.Type.Fixed then
+		--Places the panel in the camera's local space, but doesn't follow the user's head.
+		--Useful if you know what you're doing. localCF can be updated in PreUpdate for animation.
+		local cf = self.localCF - self.localCF.p
+		cf = cf + (self.localCF.p * (workspace.CurrentCamera :: Camera).HeadScale)
+		self:SetPartCFrame(cameraCF * cf)
+	elseif self.panelType == Panel3D.Type.HorizontalFollow then
+		local headLook = userHeadCF.lookVector
+		local headForwardCF = CFrame.new(userHeadCF.p, userHeadCF.p + (headLook * Vector3.new(1, 0, 1)))
+		local localCF = (headForwardCF * self.angleFromForward) * --Rotate about Y (left-right)
+			self.angleFromHorizon * --Rotate about X (up-down)
+			CFrame.new(0, 0, (workspace.CurrentCamera :: Camera).HeadScale * -self.distance)
+		self:SetPartCFrame(cameraCF * localCF)
+	elseif self.panelType == Panel3D.Type.FixedToHead then
+		--Places the panel in the user's head local space. localCF can be updated in PreUpdate for animation.
+		local cf = self.localCF - self.localCF.p
+		cf = cf + (self.localCF.p * (workspace.CurrentCamera :: Camera).HeadScale)
+		self:SetPartCFrame(cameraRenderCF * cf)
+	elseif self.panelType == Panel3D.Type.Standard then
+		if self.needsPositionUpdate or self.alwaysUpdatePosition then
+			self.needsPositionUpdate = false
+			local headLookXZ = Panel3D.GetHeadLookXZ(true)
+			local offset = standardOriginCF.Position * (workspace.CurrentCamera :: Camera).HeadScale
+			self.originCF = headLookXZ * CFrame.new(offset)
+		end
+
+		self:SetPartCFrame(cameraCF * self.originCF * self.localCF)
+	elseif self.panelType == Panel3D.Type.NewStandard then
+		if self.needsPositionUpdate or self.alwaysUpdatePosition then
+			self.needsPositionUpdate = false
+			local userHeadCF = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+			local screenOffset = newStandardOriginCF.Position * (workspace.CurrentCamera :: Camera).HeadScale
+			self.originCF = userHeadCF * CFrame.new(screenOffset)
+		end
+
+		self:SetPartCFrame(cameraCF * self.originCF * self.localCF)	
+	elseif self.panelType == Panel3D.Type.WristView then
+		if VRService:GetUserCFrameEnabled(Enum.UserCFrame.LeftHand) then
+			if self.needsPositionUpdate or self.alwaysUpdatePosition then
+				self.needsPositionUpdate = false
+				local userLeftCF = VRService:GetUserCFrame(Enum.UserCFrame.LeftHand)
+				local scaledPosition = userLeftCF.Position * (workspace.CurrentCamera :: Camera).HeadScale
+				self.originCF = CFrame.new(scaledPosition)
+			end
+
+			local userHeadCF = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+			local userHeadCameraCF = cameraCF * userHeadCF
+
+			-- make sure the panel sits at a good distance
+			local wristCF = cameraCF * self.originCF
+			local finalPosition = wristCF.Position
+			if self.distance > 0 then
+				-- hack : bring it up to head height when at a distance
+				finalPosition = Vector3.new(finalPosition.x, userHeadCameraCF.Position.y - 0.33, finalPosition.z)
+
+				local finalDistance = math.clamp((finalPosition - userHeadCameraCF.Position).Magnitude, self.distance - 0.5, self.distance + 0.5)
+				local offsetPos = (finalPosition - userHeadCameraCF.Position).Unit * finalDistance
+				finalPosition = userHeadCameraCF.Position + offsetPos
+			end
+
+			-- don't angle up/down
+			local targetPosition = Vector3.new(userHeadCameraCF.Position.x, finalPosition.y, userHeadCameraCF.Position.z)
+
+			-- face the VR camera from the wrist
+			local facingCF = CFrame.new(finalPosition, targetPosition)
+
+			self:GetPart().CFrame = facingCF
+		else
+			local cf = self.localCF - self.localCF.p
+			cf = cf + (self.localCF.p * (workspace.CurrentCamera :: Camera).HeadScale)
+			self:SetPartCFrame(cameraCF * cf)
+		end
+	elseif self.panelType == Panel3D.Type.PositionLocked then
+
+		local userHeadCameraCF
+		if GetFFlagUIBloxVRApplyHeadScale() then
+			userHeadCameraCF = VRUtil.GetUserCFrameWorldSpace(Enum.UserCFrame.Head)
+		else
+			local userHeadCF = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+			userHeadCameraCF = cameraCF * userHeadCF
+		end
+
+		if not self.LastFollowCF then
+			self.LastFollowCF = userHeadCameraCF
+		end
+
+		if self.LastFollowCF.LookVector:Dot(userHeadCameraCF.LookVector) < 0.85 then
+			self.FollowView = true
+		else
+			if self.LastFollowCF.LookVector:Dot(userHeadCameraCF.LookVector) > 0.99 then
+				self.FollowView = false
+			end
+		end
+
+		if self.FollowView then
+			self.LastFollowCF = self.LastFollowCF:Lerp(userHeadCameraCF, 0.1)
+		end
+
+		local finalPosition
+		if GetFFlagUIBloxVRApplyHeadScale() then
+			finalPosition = userHeadCameraCF.Position + self.LastFollowCF.LookVector * (self.distance * (workspace.CurrentCamera :: Camera).HeadScale + partThickness * 0.5)
+			finalPosition = Vector3.new(finalPosition.X, userHeadCameraCF.Position.Y - 0.5 * (workspace.CurrentCamera :: Camera).HeadScale, finalPosition.Z)
+		else
+			finalPosition = userHeadCameraCF.Position + self.LastFollowCF.LookVector * self.distance * (workspace.CurrentCamera :: Camera).HeadScale
+			finalPosition = Vector3.new(finalPosition.X, userHeadCameraCF.Position.Y - 0.5, finalPosition.Z)
+		end
+
+		-- don't angle up/down
+		local targetPosition = Vector3.new(userHeadCameraCF.Position.x, finalPosition.y, userHeadCameraCF.Position.z)
+
+		-- face the VR camera from the wrist
+		local facingCF = CFrame.new(finalPosition, targetPosition)
+
+		self:GetPart().CFrame = facingCF
+	end
+
+	-- optional lerp
+	if self.lerpInitialCF and self.lerpTime > 0 then
+		local targetCF = self:GetPart().CFrame
+		local targetLook = targetCF.Position + targetCF.LookVector
+		self.lerpTime -= dt * lerpSpeed
+		local lerpAmount = math.clamp(1 - self.lerpTime, 0, 1)
+		targetCF = self.lerpInitialCF:Lerp(targetCF, lerpAmount)
+
+		self:GetPart().CFrame = targetCF --CFrame.new(targetCF.Position, targetLook)
+
+		if(self.lerpScaleSize.x > 0 or self.lerpScaleSize.y > 0) then
+			local newSize = self.lerpInitialSize:Lerp(self.lerpScaleSize, lerpAmount)
+			self:ResizeStuds(newSize.x, newSize.y, self.pixelsPerStud)
+		end
+	end
+end
+
+function Panel:SetLookedAt(lookedAt)
+	if not self.isLookedAt and lookedAt then
+		self.isLookedAt = true
+		self:OnMouseEnter(self.lookAtPixel.X, self.lookAtPixel.Y)
+		if self.forceShowUntilLookedAt then
+			self.forceShowUntilLookedAt = false
+		end
+	elseif self.isLookedAt and not lookedAt then
+		self.isLookedAt = false
+		self:OnMouseLeave(self.lookAtPixel.X, self.lookAtPixel.Y)
+	end
+end
+
+function Panel:EvaluateGaze(cameraCF, cameraRenderCF, userHeadCF, lookRay, pointerRay)
+	--reset distance data
+	self.isClosest = false
+	self.lookAtPixel = zeroVector2
+	self.lookAtDistance = math.huge
+
+	--check all subpanels first, they're usually in front of the panel.
+	local highestSubpanel = nil
+	local highestSubpanelDepth = 0
+	for guiElement, subpanel in pairs(self.subpanels) do
+		if subpanel.part and subpanel.guiElement then
+			--note that we're passing subpanel.guiElement and not subpanel.gui
+			--this is on purpose so we can fall through to the panels underneath since subpanels will rarely take up the whole
+			--panel size.
+			local worldIntersectPoint, localIntersectPoint, guiPixelHit, isOnGui = Panel3D.RaycastOntoPanel(
+				subpanel.part,
+				subpanel.gui,
+				subpanel.guiElement,
+				pointerRay
+			)
+			if worldIntersectPoint then
+				subpanel.lookAtPixel = guiPixelHit
+				subpanel.cursorPos = guiPixelHit
+
+				if isOnGui and subpanel.depthOffset > highestSubpanelDepth then
+					highestSubpanel = subpanel
+					highestSubpanelDepth = subpanel.depthOffset
+				end
+			end
+		end
+	end
+
+	if highestSubpanel and highestSubpanel.depthOffset > 0 then
+		currentCursorParent = highestSubpanel.gui
+		currentCursorPos = highestSubpanel.cursorPos
+		currentClosest = highestSubpanel
+
+		for _, subpanel in pairs(self.subpanels) do
+			if subpanel ~= highestSubpanel then
+				subpanel:SetLookedAt(false)
+			end
+		end
+		highestSubpanel:SetLookedAt(true)
+	end
+
+	if self.panelType == Panel3D.Type.WristView then
+		self.isWristHeldUp = false
+		local userLeftCF = VRService:GetUserCFrame(Enum.UserCFrame.LeftHand)
+		local scaledPosition = userLeftCF.Position * (workspace.CurrentCamera :: Camera).HeadScale
+		local wristCF = cameraCF * CFrame.new(scaledPosition)
+
+		if self.distance == 0 then
+			-- conversely is the wrist where the panel would be ?
+			local userHeadCF = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+			local userHeadCameraCF = cameraCF * userHeadCF
+			local finalPosition = wristCF.Position
+			finalPosition = Vector3.new(finalPosition.x, userHeadCameraCF.Position.y - 0.33, finalPosition.z)
+
+			local finalDistance = math.clamp((finalPosition - userHeadCameraCF.Position).Magnitude, 0.5, 1.0)
+			local offsetPos = (finalPosition - userHeadCameraCF.Position).Unit * finalDistance
+			finalPosition = userHeadCameraCF.Position + offsetPos
+
+			local delta = (finalPosition - wristCF.Position).Magnitude
+			self.isWristHeldUp = delta < 0.25
+		else
+			-- keep holding it up while you are aiming at the wrist / bottom bar
+			local userRightCF = VRService:GetUserCFrame(Enum.UserCFrame.RightHand)
+			local dirRightToLeft = userLeftCF.Position - userRightCF.Position
+			local dotDir = userRightCF.LookVector:Dot(dirRightToLeft)
+			local projectedPosition = userRightCF.Position + userRightCF.LookVector * dotDir
+			local projectedDistance = (userLeftCF.Position - projectedPosition).Magnitude
+			if(projectedDistance < 0.5) then -- projected distance from the aim dir
+				self.isWristHeldUp = true
+			end
+		end
+	end
+
+	local gui = self:GetGUI()
+	local worldIntersectPoint, localIntersectPoint, guiPixelHit, isOnGui = Panel3D.RaycastOntoPanel(
+		self:GetPart(),
+		gui,
+		gui,
+		pointerRay
+	)
+
+	if worldIntersectPoint then
+		self.isOffscreen = false
+
+		--transform worldIntersectPoint to gui space
+		self.lookAtPixel = guiPixelHit
+		self.cursorPos = guiPixelHit
+
+		--fire mouse enter/leave events if necessary
+		self:SetLookedAt(isOnGui)
+
+		--evaluate distance
+		self.lookAtDistance = (worldIntersectPoint - cameraRenderCF.p).magnitude
+		if self.isLookedAt and self.lookAtDistance < currentMaxDist and self.showCursor then
+			currentMaxDist = self.lookAtDistance
+			currentClosest = self
+			if not highestSubpanel then
+				currentCursorParent = self.gui
+				currentCursorPos = self.cursorPos
+			end
+		end
+	else
+		self.isOffscreen = true
+
+		--Not looking at the plane at all, so fire off mouseleave if necessary.
+		if self.lookedAt then
+			self.lookedAt = false
+			self:OnMouseLeave(self.lookAtPixel.X, self.lookAtPixel.Y)
+		end
+	end
+end
+
+function Panel:EvaluateTransparency()
+	--Early exit if force shown
+	if self.forceShowUntilLookedAt or not self.canFade or self.forceShowUntilTick > tick() then
+		self.transparency = 0
+		return
+	end
+
+	--Early exit if we're looking at the panel (no transparency!)
+	if self.isLookedAt then
+		self.transparency = 0
+		return
+	end
+	--Similarly, exit if we can't possibly see the panel.
+	if self.isOffscreen then
+		self.transparency = 1
+		return
+	end
+	--Otherwise, we'll want to calculate the transparency.
+	self.transparency = self:CalculateTransparency()
+end
+
+function Panel:Update(cameraCF, cameraRenderCF, userHeadCF, lookRay, pointerRay, dt)
+	if (self.forceShowUntilLookedAt or self.forceShowUntilTick > tick()) and not self.part then
+		self:GetPart()
+		self:GetGUI()
+	end
+	if not self.part then
+		return
+	end
+
+	local isModal = (currentModal == self)
+	if not isModal and self.linkedTo and self.linkedTo == currentModal then
+		isModal = true
+	end
+	if currentModal and not isModal then
+		self:SetEnabled(false)
+		return
+	end
+
+	self:PreUpdate(cameraCF, cameraRenderCF, userHeadCF, lookRay, dt)
+	if self.isVisible then
+		self:EvaluatePositioning(cameraCF, cameraRenderCF, userHeadCF, dt)
+		for i, v in pairs(self.subpanels) do
+			v:Update()
+		end
+
+		self:EvaluateGaze(cameraCF, cameraRenderCF, userHeadCF, lookRay, pointerRay)
+
+		self:EvaluateTransparency(cameraCF, cameraRenderCF)
+	else
+		if self.alwaysUpdatePosition then
+			self:EvaluatePositioning(cameraCF, cameraRenderCF, userHeadCF, dt)
+		end
+	end
+end
+--End of Panel update methods
+
+--Panel virtual methods
+function Panel:PreUpdate(cameraCF, cameraRenderCF, userHeadCF, lookRay, dt) --virtual: handle positioning here
+end
+
+function Panel:OnUpdate(dt) --virtual: handle transparency here
+end
+
+function Panel:OnMouseEnter(x, y) --virtual
+end
+
+function Panel:OnMouseLeave(x, y) --virtual
+end
+
+function Panel:OnEnabled(enabled) --virtual
+end
+
+function Panel:OnModalChanged(isModal) --virtual
+end
+
+function Panel:OnVisibilityChanged(visible) --virtual
+end
+
+function Panel:CalculateTransparency() --virtual
+	if not self.canFade then
+		return 0
+	end
+
+	local guiWidth, guiHeight = self.gui.AbsoluteSize.X, self.gui.AbsoluteSize.Y
+	local lookX, lookY = self.lookAtPixel.X, self.lookAtPixel.Y
+
+	--Determine the distance from the edge;
+	--if x is negative it's on the left side, meaning the distance is just absolute value
+	--if x is positive it's on the right side, meaning the distance is x minus the width
+	local xEdgeDist = lookX < 0 and -lookX or (lookX - guiWidth)
+	local yEdgeDist = lookY < 0 and -lookY or (lookY - guiHeight)
+	if lookX > 0 and lookX < guiWidth then
+		xEdgeDist = 0
+	end
+	if lookY > 0 and lookY < guiHeight then
+		yEdgeDist = 0
+	end
+	local edgeDist = math.sqrt(xEdgeDist ^ 2 + yEdgeDist ^ 2)
+
+	--since transparency is 0-1, we know how many pixels will give us 0 and how many will give us 1.
+	local offset = fullyOpaqueAtPixelsFromEdge
+	local interval = fullyTransparentAtPixelsFromEdge
+	--then we just clamp between 0 and 1.
+	return math.max(0, math.min(1, (edgeDist - offset) / interval))
+end
+--End of Panel virtual methods
+
+--Panel configuration methods
+function Panel:ResizeStuds(width, height, pixelsPerStud)
+	pixelsPerStud = pixelsPerStud or defaultPixelsPerStud
+
+	self.width = width
+	self.height = height
+
+	self.pixelScale = pixelsPerStud / defaultPixelsPerStud
+
+	local part = self:GetPart()
+	part.Size = Vector3.new(self.width * (workspace.CurrentCamera :: Camera).HeadScale, self.height * (workspace.CurrentCamera :: Camera).HeadScale, partThickness)
+	local gui = self:GetGUI()
+	gui.CanvasSize = Vector2.new(pixelsPerStud * self.width, pixelsPerStud * self.height)
+
+	for i, v in pairs(self.subpanels) do
+		if v.part then
+			v.part.Size = part.Size
+		end
+		if v.gui then
+			v.gui.CanvasSize = gui.CanvasSize
+		end
+	end
+end
+
+function Panel:ResizePixels(width, height, pixelsPerStud)
+	pixelsPerStud = pixelsPerStud or defaultPixelsPerStud
+
+	local widthInStuds = width / pixelsPerStud
+	local heightInStuds = height / pixelsPerStud
+	self:ResizeStuds(widthInStuds, heightInStuds, pixelsPerStud)
+end
+
+function Panel:OnHeadScaleChanged()
+	local pixelsPerStud = self.pixelScale * defaultPixelsPerStud
+	self:ResizeStuds(self.width, self.height, pixelsPerStud)
+end
+
+function Panel:SetType(panelType, config)
+	self.panelType = panelType
+
+	--clear out old type-specific members
+
+	self.localCF = CFrame.new()
+
+	self.angleFromHorizon = false
+	self.angleFromForward = false
+	self.distance = 0
+
+	if not config then
+		config = {}
+	end
+
+	if panelType == Panel3D.Type.None then
+		--nothing to do
+		return
+	elseif panelType == Panel3D.Type.Standard then
+		self.localCF = config.CFrame or CFrame.new()
+	elseif panelType == Panel3D.Type.Fixed then
+		self.localCF = config.CFrame or CFrame.new()
+	elseif panelType == Panel3D.Type.HorizontalFollow then
+		self.angleFromHorizon = CFrame.Angles(config.angleFromHorizon or 0, 0, 0)
+		self.angleFromForward = CFrame.Angles(0, config.angleFromForward or 0, 0)
+		self.distance = config.distance or 5
+	elseif panelType == Panel3D.Type.FixedToHead then
+		self.localCF = config.CFrame or CFrame.new()
+	elseif panelType == Panel3D.Type.NewStandard then
+		self.localCF = config.CFrame or CFrame.new()
+	elseif panelType == Panel3D.Type.WristView then
+		self.localCF = config.CFrame or CFrame.new()
+		self.distance = 0
+	elseif panelType == Panel3D.Type.PositionLocked then
+		self.localCF = config.CFrame or CFrame.new()	
+	else
+		error("Invalid Panel type")
+	end
+end
+
+function Panel:IsPositionLockedType()
+	return self.panelType == Panel3D.Type.PositionLocked
+end
+
+function Panel:SetVisible(visible, modal)
+	if visible ~= self.isVisible then
+		self:OnVisibilityChanged(visible)
+		if not visible then
+			Panel3D.OnPanelClosed:Fire(self.name)
+		else
+			self.needsPositionUpdate = true
+			if self.panelType == Panel3D.Type.WristView then
+				local userHeadCF = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+				self.originCF = userHeadCF * newStandardOriginCF
+			end
+		end
+	end
+
+	self.isVisible = visible
+	self:SetEnabled(visible)
+	if visible and modal then
+		Panel3D.SetModalPanel(self)
+	end
+	if not visible and currentModal == self then
+		if modal then
+			--restore last modal panel
+			Panel3D.SetModalPanel(lastModal)
+		else
+			Panel3D.SetModalPanel(nil)
+
+			--if the coder explicitly wanted to hide this modal panel,
+			--it follows that they don't want it to be restored when the next
+			--modal panel is hidden.
+			if lastModal == self then
+				lastModal = nil
+			end
+		end
+	end
+
+	if not visible and self.forceShowUntilLookedAt then
+		self.forceShowUntilLookedAt = false
+	end
+end
+
+function Panel:IsVisible()
+	return self.isVisible
+end
+
+function Panel:LinkTo(panelName)
+	if type(panelName) == "string" then
+		self.linkedTo = Panel3D.Get(panelName)
+	else
+		self.linkedTo = panelName
+	end
+end
+
+function Panel:ForceShowUntilLookedAt(makeModal)
+	--ensure the part exists
+	self:GetPart()
+	self:GetGUI()
+
+	self:SetVisible(true, makeModal)
+	self:RequestPositionUpdate()
+	self.forceShowUntilLookedAt = true
+end
+
+function Panel:ForceShowForSeconds(seconds)
+	self:GetPart()
+	self:GetGUI()
+
+	self:SetVisible(true)
+	if self.forceShowUntilTick < tick() then
+		self:RequestPositionUpdate()
+	end
+	self.forceShowUntilTick = tick() + seconds
+end
+
+function Panel:SetCanFade(canFade)
+	self.canFade = canFade
+end
+
+function Panel:RequestPositionUpdate()
+	self.needsPositionUpdate = true
+end
+
+function Panel:ForcePositionUpdate(forceUpdate)
+	self.alwaysUpdatePosition = forceUpdate
+end
+
+function Panel:GetGuiPositionInPanelSpace(guiPosition)
+	local partSize = Vector2.new(self.part.Size.X, self.part.Size.Y)
+	local guiSize = self.gui.AbsoluteSize
+	local guiCenter = guiSize / 2
+
+	local guiPositionFraction = (guiPosition - guiCenter) / guiSize
+	local positionInPartFace = guiPositionFraction * partSize
+
+	return Vector3.new(positionInPartFace.X, positionInPartFace.Y, partThickness * 0.5)
+end
+
+function Panel:GetCFrameInCameraSpace()
+	if self.panelType == Panel3D.Type.Standard or self.panelType == Panel3D.Type.NewStandard then
+		return self.originCF * self.localCF
+	else
+		return self.localCF or CFrame.new()
+	end
+end
+
+--Child class, Subpanel
+local Subpanel = {}
+Subpanel.__index = Subpanel
+function Subpanel.new(parentPanel, guiElement)
+	local self = {}
+	self.parentPanel = parentPanel
+	self.guiElement = guiElement
+	self.lastParent = guiElement.Parent
+	self.ancestryConn = nil
+	self.changedConn = nil
+
+	self.lookAtPixel = Vector2.new(-1, -1)
+	self.cursorPos = Vector2.new(-1, -1)
+	self.lookedAt = false
+
+	self.isEnabled = true
+
+	self.part = nil
+	self.gui = nil
+	self.guiSurrogate = nil
+
+	self.depthOffset = 0
+
+	setmetatable(self, Subpanel)
+
+	self:GetGUI()
+	self:UpdateSurrogate()
+	self:WatchParent(self.lastParent)
+
+	guiElement.Parent = self.guiSurrogate
+
+	local function ancestryCallback(parent, child)
+		self:GetGUI().Enabled = self.parentPanel:GetGUI():IsAncestorOf(self.lastParent)
+		if not self:GetGUI().Enabled then
+			self:GetPart().Parent = nil
+		else
+			self:GetPart().Parent = workspace.CurrentCamera
+		end
+		if child == guiElement then
+			--disconnect the event because we're going to move this element
+			self.ancestryConn:disconnect()
+
+			self.lastParent = guiElement.Parent
+			guiElement.Parent = self.guiSurrogate
+			self:WatchParent(self.lastParent)
+
+			--reconnect it
+			self.ancestryConn = guiElement.AncestryChanged:connect(ancestryCallback)
+		end
+	end
+	self.ancestryConn = guiElement.AncestryChanged:connect(ancestryCallback)
+
+	return self
+end
+
+function Subpanel:Cleanup()
+	self.guiElement.Parent = self.lastParent
+	if self.part then
+		self.part:Destroy()
+		self.part = nil
+	end
+	spawn(function()
+		wait() --wait so anything that's in the gui that doesn't want to be has time to get out (panel cursor for example)
+		if self.gui then
+			self.gui:Destroy()
+			self.gui = nil
+		end
+	end)
+	if self.ancestryConn then
+		self.ancestryConn:disconnect()
+		self.ancestryConn = nil
+	end
+	if self.changedConn then
+		self.changedConn:disconnect()
+		self.changedConn = nil
+	end
+	self.lastParent = nil
+	self.parentPanel = nil
+	self.guiElement = nil
+	self.guiSurrogate = nil
+end
+
+function Subpanel:OnMouseEnter(x, y) end
+function Subpanel:OnMouseLeave(x, y) end
+
+function Subpanel:SetLookedAt(lookedAt)
+	if lookedAt and not self.lookedAt then
+		self:OnMouseEnter(self.lookAtPixel.X, self.lookAtPixel.Y)
+	elseif not lookedAt and self.lookedAt then
+		self:OnMouseLeave(self.lookAtPixel.X, self.lookAtPixel.Y)
+	end
+	self.lookedAt = lookedAt
+end
+
+function Subpanel:WatchParent(parent)
+	if self.changedConn then
+		self.changedConn:disconnect()
+	end
+	self.changedConn = parent.Changed:connect(function(prop)
+		if prop == "AbsolutePosition" or prop == "AbsoluteSize" or prop == "Parent" then
+			self:UpdateSurrogate()
+		end
+	end)
+end
+
+function Subpanel:UpdateSurrogate()
+	local lastParent = self.lastParent
+	self.guiSurrogate.Position = UDim2.new(0, lastParent.AbsolutePosition.X, 0, lastParent.AbsolutePosition.Y)
+	self.guiSurrogate.Size = UDim2.new(0, lastParent.AbsoluteSize.X, 0, lastParent.AbsoluteSize.Y)
+end
+
+function Subpanel:GetPart()
+	if self.part then
+		return self.part
+	end
+
+	self.part = self.parentPanel:GetPart():Clone()
+	self.part.Parent = partFolder
+	return self.part
+end
+
+function Subpanel:GetGUI()
+	if self.gui then
+		return self.gui
+	end
+
+	self.gui = Utility:Create("SurfaceGui")({
+		Parent = RobloxGui,
+		Adornee = self:GetPart(),
+		Active = true,
+		ToolPunchThroughDistance = 1000,
+		CanvasSize = self.parentPanel:GetGUI().CanvasSize,
+		Enabled = self.parentPanel.isEnabled,
+		AlwaysOnTop = true,
+	})
+	self.guiSurrogate = Utility:Create("Frame")({
+		Parent = self.gui,
+
+		Active = false,
+
+		Position = UDim2.new(0, 0, 0, 0),
+		Size = UDim2.new(1, 0, 1, 0),
+
+		BackgroundTransparency = 1,
+	})
+	return self.gui
+end
+
+function Subpanel:SetDepthOffset(offset)
+	self.depthOffset = offset
+end
+
+function Subpanel:Update()
+	local part = self:GetPart()
+	local parentPart = self.parentPanel:GetPart()
+
+	if part and parentPart then
+		part.CFrame = parentPart.CFrame * CFrame.new(0, 0, -self.depthOffset)
+	end
+end
+
+function Subpanel:SetEnabled(enabled)
+	-- Don't change check here, parentPanel may try to refresh our enabled state
+	-- alternatively we could listen to an enabled changed event on our parent panel
+	self.isEnabled = enabled
+	if enabled and self.parentPanel.isEnabled then
+		self:GetPart().Parent = partFolder
+		self:GetGUI().Enabled = true
+	else
+		self:GetPart().Parent = nil
+		self:GetGUI().Enabled = false
+	end
+end
+
+function Subpanel:GetEnabled()
+	return self.isEnabled
+end
+
+function Subpanel:GetPixelScale()
+	return self.parentPanel:GetPixelScale()
+end
+function Panel:GetPixelScale()
+	return self.pixelScale
+end
+
+function Panel:AddSubpanel(guiElement)
+	local subpanel = Subpanel.new(self, guiElement)
+	self.subpanels[guiElement] = subpanel
+	return subpanel
+end
+
+function Panel:RemoveSubpanel(guiElement)
+	local subpanel = self.subpanels[guiElement]
+	if subpanel then
+		subpanel:Cleanup()
+	end
+	self.subpanels[guiElement] = nil
+end
+
+function Panel:SetSubpanelDepth(guiElement, depth)
+	local subpanel = self.subpanels[guiElement]
+
+	if depth == 0 then
+		if subpanel then
+			self:RemoveSubpanel(guiElement)
+		end
+		return nil
+	end
+
+	if not subpanel then
+		subpanel = self:AddSubpanel(guiElement)
+	end
+	subpanel:SetDepthOffset(depth)
+
+	return subpanel
+end
+
+--End of Panel configuration methods
+--End of Panel class implementation
+
+--Panel3D API
+function Panel3D.Get(name)
+	local panel = panels[name]
+	if not panels[name] then
+		panels[name] = Panel.new(name)
+		panel = panels[name]
+	end
+	return panel
+end
+--End of Panel3D API
+
+--Panel3D Setup
+local frameStart = tick()
+local function onRenderStep()
+	if not VRService.VREnabled then
+		return
+	end
+
+	local now = tick()
+	local dt = now - frameStart
+	frameStart = now
+
+	--reset distance info
+	currentClosest = nil
+	currentMaxDist = math.huge
+
+	--figure out some useful stuff
+	local camera = workspace.CurrentCamera :: Camera
+	local cameraCF = camera.CFrame
+	local cameraRenderCF = camera:GetRenderCFrame()
+	local userHeadCF = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+	local lookRay = Ray.new(cameraRenderCF.p, cameraRenderCF.lookVector)
+
+	local inputUserCFrame = VRService.GuiInputUserCFrame
+	local inputCF = cameraCF * VRService:GetUserCFrame(inputUserCFrame)
+	local pointerRay = Ray.new(inputCF.p, inputCF.lookVector)
+
+	--allow all panels to run their own update code
+	for i, v in pairs(panels) do
+		v:Update(cameraCF, cameraRenderCF, userHeadCF, lookRay, pointerRay, dt)
+	end
+
+	--evaluate linked panels
+	local processed = {}
+	for i, v in pairs(panels) do
+		if not processed[v] and v.linkedTo and v.isVisible and v.linkedTo.isVisible then
+			processed[v] = true
+			processed[v.linkedTo] = true
+
+			local minTransparency = math.min(v.transparency, v.linkedTo.transparency)
+			v.transparency = minTransparency
+			v.linkedTo.transparency = minTransparency
+		end
+	end
+
+	--run post update because the distance information hasn't been
+	--finalized until now.
+	for i, v in pairs(panels) do
+		--If the part is fully transparent, we don't want to keep it around in the workspace.
+		if v.part and v.gui then
+			--check if this panel is the current modal panel
+			local isModal = (currentModal == v)
+			--but also check if this panel is linked to the current modal panel
+			if not isModal and v.linkedTo and v.linkedTo == currentModal then
+				isModal = true
+			end
+
+			local show = v.isVisible
+			if not isModal and currentModal then
+				show = false
+			end
+			if v.transparency >= 1 then
+				show = false
+			end
+
+			if v.forceShowUntilLookedAt then
+				show = true
+			end
+			if not v.canFade and v.isVisible then
+				show = true
+			end
+
+			v:SetEnabled(show)
+		end
+
+		v:OnUpdate(dt)
+	end
+
+	if currentClosest and EngineFeatureEnableVRUpdate3 then
+		local x, y = currentCursorPos.X, currentCursorPos.Y
+		local pixelScale = currentClosest:GetPixelScale()
+		cursor.Size = UDim2.new(0, cursorSize * pixelScale, 0, cursorSize * pixelScale)
+		cursor.Position = UDim2.new(0, x - cursor.AbsoluteSize.x * 0.5, 0, y - cursor.AbsoluteSize.y * 0.5)
+	else
+		cursor.Parent = nil
+	end
+
+	lastClosest = currentClosest
+end
+
+local isCameraReady = true
+local function putFoldersIn(parent)
+	partFolder.Parent = parent
+	effectFolder.Parent = parent
+end
+
+local headscaleChangedConn = nil
+local function onHeadScaleChanged()
+	for i, v in pairs(panels) do
+		v:OnHeadScaleChanged()
+	end
+end
+
+local function onCurrentCameraChanged()
+	onHeadScaleChanged()
+	if headscaleChangedConn then
+		headscaleChangedConn:disconnect()
+	end
+	headscaleChangedConn = (workspace.CurrentCamera :: Camera):GetPropertyChangedSignal("HeadScale"):Connect(onHeadScaleChanged)
+
+	if VRService.VREnabled and isCameraReady then
+		putFoldersIn(workspace.CurrentCamera)
+	end
+end
+
+local currentCameraChangedConn = nil
+local renderStepFuncBound = false
+local function onVREnabledChanged()
+	if VRService.VREnabled then
+		while not isCameraReady do
+			wait()
+		end
+
+		if workspace.CurrentCamera then
+			onCurrentCameraChanged()
+		end
+		currentCameraChangedConn = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(onCurrentCameraChanged)
+
+		putFoldersIn(workspace.CurrentCamera)
+
+		if not renderStepFuncBound then
+			RunService:BindToRenderStep(renderStepName, Enum.RenderPriority.Last.Value, onRenderStep)
+			renderStepFuncBound = true
+		end
+	else
+		if currentCameraChangedConn then
+			currentCameraChangedConn:disconnect()
+			currentCameraChangedConn = nil
+		end
+		putFoldersIn(nil)
+
+		if renderStepFuncBound then
+			RunService:UnbindFromRenderStep(renderStepName)
+			renderStepFuncBound = false
+		end
+	end
+end
+VRService:GetPropertyChangedSignal("VREnabled"):connect(onVREnabledChanged)
+spawn(onVREnabledChanged)
+
+coroutine.wrap(function()
+	while true do
+		if workspace.CurrentCamera then
+			if (workspace.CurrentCamera :: Camera).CameraSubject ~= nil or (workspace.CurrentCamera :: Camera).CameraType == Enum.CameraType.Scriptable then
+				break
+			end
+			(workspace.CurrentCamera :: Camera).Changed:Wait()
+		else
+			wait()
+		end
+	end
+
+	isCameraReady = true
+end)()
+
+return Panel3D
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Utility</string>
+          <string name="Source"><![CDATA[--!nonstrict
+
+--[[
+		Filename: Utility.lua
+		Written by: jeditkacheff
+		Version 1.0
+		Description: Utility module for CoreScripts
+--]]
+
+------------------ CONSTANTS --------------------
+local SELECTED_COLOR = Color3.fromRGB(0,162,255)
+local NON_SELECTED_COLOR = Color3.fromRGB(78,84,96)
+
+local ARROW_COLOR = Color3.fromRGB(204, 204, 204)
+local ARROW_COLOR_HOVER = Color3.fromRGB(255, 255, 255)
+local ARROW_COLOR_TOUCH = ARROW_COLOR_HOVER
+local ARROW_COLOR_INACTIVE = Color3.fromRGB(150, 150, 150)
+
+local SELECTED_LEFT_IMAGE = "rbxasset://textures/ui/Settings/Slider/SelectedBarLeft.png"
+local NON_SELECTED_LEFT_IMAGE = "rbxasset://textures/ui/Settings/Slider/BarLeft.png"
+local SELECTED_RIGHT_IMAGE = "rbxasset://textures/ui/Settings/Slider/SelectedBarRight.png"
+local NON_SELECTED_RIGHT_IMAGE= "rbxasset://textures/ui/Settings/Slider/BarRight.png"
+
+local CONTROLLER_SCROLL_DELTA = 0.2
+local CONTROLLER_THUMBSTICK_DEADZONE = 0.8
+
+local DROPDOWN_BG_TRANSPARENCY = 0.2
+local DROPDOWN_SUBTITLE_OFFSET = 10
+
+local MILLISECONDS_PER_SECOND = 1000
+local MILLISECONDS_PER_DAY = 24 * 60 * 60 * MILLISECONDS_PER_SECOND
+local MILLISECONDS_PER_WEEK = MILLISECONDS_PER_DAY * 7
+
+------------- SERVICES ----------------
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local RobloxGui = game:GetService("Players").LocalPlayer.PlayerGui
+local ContextActionService = game:GetService("ContextActionService")
+local VRService = game:GetService("VRService")
+local Workspace = game:GetService("Workspace")
+
+--------------- FLAGS ----------------
+
+local success, result = pcall(function() return settings():GetFFlag('UseNotificationsLocalization') end)
+local FFlagUseNotificationsLocalization = success and result
+
+
+------------------ Modules --------------------
+--local RobloxTranslator = require(CoreGui.RobloxGui.Modules:WaitForChild("RobloxTranslator"))
+
+------------------ VARIABLES --------------------
+local tenFootInterfaceEnabled = GuiService:IsTenFootInterface()--require(RobloxGui.Modules:WaitForChild("TenFootInterface")):IsEnabled()
+
+----------- UTILITIES --------------
+local Util = {}
+do
+	function Util.Create(instanceType)
+		return function(data)
+			local obj = Instance.new(instanceType)
+			local parent = nil
+			for k, v in pairs(data) do
+				if type(k) == 'number' then
+					v.Parent = obj
+				elseif k == 'Parent' then
+					parent = v
+				else
+					obj[k] = v
+				end
+			end
+			if parent then
+				obj.Parent = parent
+			end
+			return obj
+		end
+	end
+end
+
+local onResizedCallbacks = {}
+setmetatable(onResizedCallbacks, { __mode = 'k' })
+
+-- used by several guis to show no selection adorn
+local noSelectionObject = Util.Create'ImageLabel'
+{
+	Image = "",
+	BackgroundTransparency = 1
+};
+
+
+-- MATH --
+function clamp(low, high, input)
+	return math.max(low, math.min(high, input))
+end
+
+---- TWEENZ ----
+local function Linear(t, b, c, d)
+	if t >= d then
+		return b + c
+	end
+
+	return c*t/d + b
+end
+
+local function EaseOutQuad(t, b, c, d)
+	if t >= d then
+		return b + c
+	end
+
+	t = t/d
+	return b - c*t*(t - 2)
+end
+
+local function EaseInOutQuad(t, b, c, d)
+	if t >= d then
+		return b + c
+	end
+
+	t = t/d
+	if t < 1/2 then
+		return 2*c*t*t + b
+	end
+	return b + c*(2*(2 - t)*t - 1)
+end
+
+function PropertyTweener(instance, prop, start, final, duration, easingFunc, cbFunc)
+	local this = {}
+	this.StartTime = tick()
+	this.EndTime = this.StartTime + duration
+	this.Cancelled = false
+
+	local finished = false
+	local percentComplete = 0
+
+	local function finalize()
+		if instance then
+			instance[prop] = easingFunc(1, start, final - start, 1)
+		end
+		finished = true
+		percentComplete = 1
+		if cbFunc then
+			cbFunc()
+		end
+	end
+
+	-- Initial set
+	instance[prop] = easingFunc(0, start, final - start, duration)
+	coroutine.wrap(function()
+		local now = tick()
+		while now < this.EndTime and instance do
+			if this.Cancelled then
+				return
+			end
+			instance[prop] = easingFunc(now - this.StartTime, start, final - start, duration)
+			percentComplete = clamp(0, 1, (now - this.StartTime) / duration)
+			RunService.RenderStepped:Wait()
+			now = tick()
+		end
+		if this.Cancelled == false and instance then
+			finalize()
+		end
+	end)()
+
+	function this:GetFinal()
+		return final
+	end
+
+	function this:GetPercentComplete()
+		return percentComplete
+	end
+
+	function this:IsFinished()
+		return finished
+	end
+
+	function this:Finish()
+		if not finished then
+			self:Cancel()
+			finalize()
+		end
+	end
+
+	function this:Cancel()
+		this.Cancelled = true
+	end
+
+	return this
+end
+
+----------- CLASS DECLARATION --------------
+
+local function CreateSignal()
+	local sig = {}
+
+	local mSignaler = Instance.new('BindableEvent')
+
+	local mArgData = nil
+	local mArgDataCount = nil
+
+	function sig:fire(...)
+		mArgData = {...}
+		mArgDataCount = select('#', ...)
+		mSignaler:Fire()
+	end
+
+	function sig:connect(f)
+		if not f then error("connect(nil)", 2) end
+		return mSignaler.Event:Connect(function()
+			f(unpack(mArgData, 1, mArgDataCount))
+		end)
+	end
+
+	function sig:wait()
+		mSignaler.Event:wait()
+		if not mArgData then
+			error("Missing arg data, likely due to :TweenSize/Position corrupting threadrefs.")
+		end
+		return unpack(mArgData, 1, mArgDataCount)
+	end
+
+	return sig
+end
+
+local function getViewportSize()
+	if _G.__TESTEZ_RUNNING_TEST__ then
+		--Return fake value here for unit tests
+		return Vector2.new(1024, 1024)
+	end
+
+	while not workspace.CurrentCamera do
+		workspace.Changed:Wait()
+	end
+	assert(workspace.CurrentCamera, "")
+
+	-- ViewportSize is initally set to 1, 1 in Camera.cpp constructor.
+	-- Also check against 0, 0 incase this is changed in the future.
+	while (workspace.CurrentCamera :: Camera).ViewportSize == Vector2.new(0,0) or
+		(workspace.CurrentCamera :: Camera).ViewportSize == Vector2.new(1,1) do
+		(workspace.CurrentCamera :: Camera).Changed:Wait()
+	end
+
+	return (workspace.CurrentCamera :: Camera).ViewportSize
+end
+
+local function isSmallTouchScreen()
+	local viewportSize = getViewportSize()
+	return UserInputService.TouchEnabled and (viewportSize.Y < 500 or viewportSize.X < 700)
+end
+
+local function isPortrait()
+	local viewport = getViewportSize()
+	return viewport.Y > viewport.X
+end
+
+local function isTenFootInterface()
+	return tenFootInterfaceEnabled
+end
+
+local function usesSelectedObject()
+	--VR does not use selected objects (in the same way as gamepad)
+	if VRService.VREnabled then return false end
+	--Touch does not use selected objects unless there's also a gamepad
+	if UserInputService.TouchEnabled and not UserInputService.GamepadEnabled then return false end
+	--PC with gamepad, console... does use selected objects
+	return true
+end
+
+local function addHoverState(button, instance, onNormalButtonState, onHoverButtonState)
+	local function onNormalButtonStateCallback()
+		if button.Active then
+			onNormalButtonState(instance)
+		end
+	end
+	local function onHoverButtonStateCallback()
+		if button.Active then
+			onHoverButtonState(instance)
+		end
+	end
+
+	button.MouseEnter:Connect(onHoverButtonStateCallback)
+	button.SelectionGained:Connect(onHoverButtonStateCallback)
+	button.MouseLeave:Connect(onNormalButtonStateCallback)
+	button.SelectionLost:Connect(onNormalButtonStateCallback)
+
+	onNormalButtonState(instance)
+end
+
+local function addOnResizedCallback(key, callback)
+	onResizedCallbacks[key] = callback
+	callback(getViewportSize(), isPortrait())
+end
+
+local gamepadSet = {
+	[Enum.UserInputType.Gamepad1] = true;
+	[Enum.UserInputType.Gamepad2] = true;
+	[Enum.UserInputType.Gamepad3] = true;
+	[Enum.UserInputType.Gamepad4] = true;
+	[Enum.UserInputType.Gamepad5] = true;
+	[Enum.UserInputType.Gamepad6] = true;
+	[Enum.UserInputType.Gamepad7] = true;
+	[Enum.UserInputType.Gamepad8] = true;
+}
+
+local function MakeDefaultButton(name, size, clickFunc, pageRef, hubRef)
+	local SelectionOverrideObject = Util.Create'ImageLabel'
+	{
+		Image = "",
+		BackgroundTransparency = 1,
+	};
+
+	local button = Util.Create'ImageButton'
+	{
+		Name = name .. "Button",
+		Image = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButton.png",
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(8,6,46,44),
+		AutoButtonColor = false,
+		BackgroundTransparency = 1,
+		Size = size,
+		ZIndex = 2,
+		SelectionImageObject = SelectionOverrideObject
+	};
+
+	local _enabled = Util.Create'BoolValue'
+	{
+		Name = 'Enabled',
+		Parent = button,
+		Value = true
+	}
+
+	if clickFunc then
+		button.MouseButton1Click:Connect(function()
+			clickFunc(gamepadSet[UserInputService:GetLastInputType()] or false)
+		end)
+	end
+
+	local function isPointerInput(inputObject)
+		return inputObject.UserInputType == Enum.UserInputType.MouseMovement or inputObject.UserInputType == Enum.UserInputType.Touch
+	end
+
+	local rowRef = nil
+	local function setRowRef(ref)
+		rowRef = ref
+	end
+
+	local function selectButton()
+		local hub = hubRef
+		if hub == nil then
+			if pageRef then
+				hub = pageRef.HubRef
+			end
+		end
+
+		if (hub and hub.Active) or hub == nil then
+			button.Image = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButtonSelected.png"
+
+			local scrollTo = button
+			if rowRef then
+				scrollTo = rowRef
+			end
+			if hub then
+				hub:ScrollToFrame(scrollTo)
+			end
+		end
+	end
+
+	local function deselectButton()
+		button.Image = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButton.png"
+	end
+
+	button.InputBegan:Connect(function(inputObject)
+		if button.Selectable and isPointerInput(inputObject) then
+			selectButton()
+		end
+	end)
+	button.InputEnded:Connect(function(inputObject)
+		if button.Selectable and GuiService.SelectedCoreObject ~= button and isPointerInput(inputObject) then
+			deselectButton()
+		end
+	end)
+
+
+	button.SelectionGained:Connect(function()
+		selectButton()
+	end)
+	button.SelectionLost:Connect(function()
+		deselectButton()
+	end)
+
+	local _guiServiceCon = GuiService.Changed:Connect(function(prop)
+		if prop ~= "SelectedCoreObject" then return end
+		if not usesSelectedObject() then return end
+
+		if GuiService.SelectedCoreObject == nil or GuiService.SelectedCoreObject ~= button then
+			deselectButton()
+			return
+		end
+
+		if button.Selectable then
+			selectButton()
+		end
+	end)
+
+	return button, setRowRef
+end
+
+local function MakeButton(name, text, size, clickFunc, pageRef, hubRef)
+	local button, setRowRef = MakeDefaultButton(name, size, clickFunc, pageRef, hubRef)
+
+	local textLabel = Util.Create'TextLabel'
+	{
+		Name = name .. "TextLabel",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 1, -8),
+		Position = UDim2.new(0,0,0,0),
+		TextColor3 = Color3.fromRGB(255,255,255),
+		TextYAlignment = Enum.TextYAlignment.Center,
+		Font = Enum.Font.SourceSansBold,
+		TextSize = 24,
+		Text = text,
+		TextScaled = true,
+		TextWrapped = true,
+		ZIndex = 2,
+		Parent = button
+	};
+	local constraint = Instance.new("UITextSizeConstraint",textLabel)
+
+	if isSmallTouchScreen() then
+		textLabel.TextSize = 18
+	elseif isTenFootInterface() then
+		textLabel.TextSize = 36
+	end
+	constraint.MaxTextSize = textLabel.TextSize
+
+	return button, textLabel, setRowRef
+end
+
+local function MakeImageButton(name, image, size, imageSize, clickFunc, pageRef, hubRef)
+	local button, setRowRef = MakeDefaultButton(name, size, clickFunc, pageRef, hubRef)
+
+	local imageLabel = Util.Create'ImageLabel'
+	{
+		Name = name .. "ImageLabel",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = imageSize,
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Image = image,
+		ZIndex = 2,
+		Parent = button
+	};
+
+	return button, imageLabel, setRowRef
+end
+
+local function AddButtonRow(pageToAddTo, name, text, size, clickFunc, hubRef)
+	local button, textLabel, setRowRef = MakeButton(name, text, size, clickFunc, pageToAddTo, hubRef)
+	local row = Util.Create'Frame'
+	{
+		Name = name .. "Row",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, size.Y.Scale, size.Y.Offset),
+		Parent = pageToAddTo.Page
+	}
+	button.Parent = row
+	button.AnchorPoint = Vector2.new(1, 0)
+	button.Position = UDim2.new(1, -20, 0, 0)
+	return row, button, textLabel, setRowRef
+end
+
+local function CreateDropDown(dropDownStringTable, startPosition, settingsHub)
+	-------------------- CONSTANTS ------------------------
+	local DROPDOWN_DEFAULT_TEXT_KEY = "Feature.SettingsHub.Label.ChooseOne"
+	local SCROLLING_FRAME_PIXEL_OFFSET = 25
+	local SELECTION_TEXT_COLOR_NORMAL = Color3.fromRGB(178,178,178)
+	local SELECTION_TEXT_COLOR_NORMAL_VR = Color3.fromRGB(229,229,229)
+	local SELECTION_TEXT_COLOR_HIGHLIGHTED = Color3.fromRGB(255,255,255)
+
+	-------------------- VARIABLES ------------------------
+	local lastSelectedCoreObject = nil
+
+	-------------------- SETUP ------------------------
+	local this = {}
+	this.CurrentIndex = nil
+	this.UpdateDropDownList = nil
+	this.DropDownFrame = nil
+	this.Selections = nil
+
+	local indexChangedEvent = Instance.new("BindableEvent")
+	indexChangedEvent.Name = "IndexChanged"
+
+	if type(dropDownStringTable) ~= "table" then
+		error("CreateDropDown dropDownStringTable (first arg) is not a table", 2)
+		return this
+	end
+
+	local indexChangedEvent = Instance.new("BindableEvent")
+	indexChangedEvent.Name = "IndexChanged"
+
+	local interactable = true
+	local guid = HttpService:GenerateGUID(false)
+	local dropDownButtonEnabled
+	local lastStringTable = dropDownStringTable
+
+	----------------- GUI SETUP ------------------------
+	local DropDownFullscreenFrame = Util.Create'ImageButton'
+	{
+		Name = "DropDownFullscreenFrame",
+		BackgroundTransparency = DROPDOWN_BG_TRANSPARENCY,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundColor3 = Color3.fromRGB(0,0,0),
+		ZIndex = 10,
+		Active = true,
+		Visible = false,
+		Selectable = false,
+		AutoButtonColor = false,
+		Parent = CoreGui.RobloxGui
+	};
+
+	local function onVREnabled(prop)
+		if prop ~= "VREnabled" then
+			return
+		end
+		if VRService.VREnabled then
+			local Panel3D = require(CoreGui.RobloxGui.Modules.VR.Panel3D) :: any
+			DropDownFullscreenFrame.Parent = Panel3D.Get("SettingsMenu"):GetGUI()
+			DropDownFullscreenFrame.BackgroundTransparency = 1
+		else
+			DropDownFullscreenFrame.Parent = CoreGui.RobloxGui
+			DropDownFullscreenFrame.BackgroundTransparency = DROPDOWN_BG_TRANSPARENCY
+		end
+
+		--Force the gui to update, but only if onVREnabled is fired later on
+		if this.UpdateDropDownList then
+			this:UpdateDropDownList(lastStringTable)
+		end
+	end
+	VRService.Changed:Connect(onVREnabled)
+	onVREnabled("VREnabled")
+
+	local DropDownSelectionFrame = Util.Create'ImageLabel'
+	{
+		Name = "DropDownSelectionFrame",
+		Image = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButton.png",
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(8,6,46,44),
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.6, 0, 0.9, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		ZIndex = 10,
+		Parent = DropDownFullscreenFrame
+	};
+
+	local DropDownScrollingFrame = Util.Create'ScrollingFrame'
+	{
+		Name = "DropDownScrollingFrame",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, -20, 1, -SCROLLING_FRAME_PIXEL_OFFSET),
+		Position = UDim2.new(0, 10, 0, 10),
+		ZIndex = 10,
+		Parent = DropDownSelectionFrame
+	};
+
+	local guiServiceChangeCon = nil
+	local active = false
+	local hideDropDownSelection = function(name, inputState)
+		if name ~= nil and inputState ~= Enum.UserInputState.Begin then return end
+		this.DropDownFrame.Selectable = interactable
+
+		--Make sure to set the hub to Active again so selecting the
+		--dropdown button will highlight it
+		settingsHub:SetActive(true)
+
+		if DropDownFullscreenFrame.Visible and usesSelectedObject() then
+			GuiService.SelectedCoreObject = lastSelectedCoreObject
+		end
+		DropDownFullscreenFrame.Visible = false
+		if guiServiceChangeCon then guiServiceChangeCon:Disconnect() end
+		ContextActionService:UnbindCoreAction(guid .. "Action")
+		ContextActionService:UnbindCoreAction(guid .. "FreezeAction")
+
+		dropDownButtonEnabled.Value = interactable
+		active = false
+
+		if VRService.VREnabled then
+			local Panel3D = require(CoreGui.RobloxGui.Modules.VR.Panel3D) :: any
+			Panel3D.Get("SettingsMenu"):SetSubpanelDepth(DropDownFullscreenFrame, 0)
+		end
+	end
+	local noOpFunc = function() end
+
+	local DropDownFrameClicked = function()
+		if not interactable then return end
+
+		this.DropDownFrame.Selectable = false
+		active = true
+
+		DropDownFullscreenFrame.Visible = true
+		if VRService.VREnabled then
+			local Panel3D = require(CoreGui.RobloxGui.Modules.VR.Panel3D) :: any
+			Panel3D.Get("SettingsMenu"):SetSubpanelDepth(DropDownFullscreenFrame, 0.5)
+		end
+
+		lastSelectedCoreObject = this.DropDownFrame
+		if this.CurrentIndex and this.CurrentIndex > 0 then
+			GuiService.SelectedCoreObject = this.Selections[this.CurrentIndex]
+		elseif #this.Selections > 0 then
+			GuiService.SelectedCoreObject = this.Selections[1]
+		end
+
+		guiServiceChangeCon = GuiService:GetPropertyChangedSignal("SelectedCoreObject"):Connect(function()
+			for i = 1, #this.Selections do
+				if GuiService.SelectedCoreObject == this.Selections[i] then
+					this.Selections[i].TextColor3 = SELECTION_TEXT_COLOR_HIGHLIGHTED
+				else
+					this.Selections[i].TextColor3 = VRService.VREnabled and SELECTION_TEXT_COLOR_NORMAL_VR or SELECTION_TEXT_COLOR_NORMAL
+				end
+			end
+		end)
+
+		ContextActionService:BindCoreAction(guid .. "FreezeAction", noOpFunc, false, Enum.UserInputType.Keyboard, Enum.UserInputType.Gamepad1)
+		ContextActionService:BindCoreAction(guid .. "Action", hideDropDownSelection, false, Enum.KeyCode.ButtonB, Enum.KeyCode.Escape)
+
+		settingsHub:SetActive(false)
+
+		dropDownButtonEnabled.Value = false
+	end
+
+	local dropDownDefaultText = "RobloxTranslatorDefaultText"--RobloxTranslator:FormatByKey(DROPDOWN_DEFAULT_TEXT_KEY)
+
+	local dropDownFrameSize = UDim2.new(0.6, 0, 0, 50)
+	this.DropDownFrame = MakeButton("DropDownFrame", dropDownDefaultText,
+		dropDownFrameSize, DropDownFrameClicked, nil, settingsHub)
+	this.DropDownFrame.Position = UDim2.new(1, 0, 0.5, 0)
+	this.DropDownFrame.AnchorPoint = Vector2.new(1, 0.5)
+
+	dropDownButtonEnabled = this.DropDownFrame.Enabled
+	local selectedTextLabel = this.DropDownFrame.DropDownFrameTextLabel
+	selectedTextLabel.Position = UDim2.new(0, 15, 0, 0)
+	selectedTextLabel.Size = UDim2.new(1, -50, 1, -8)
+	selectedTextLabel.ClipsDescendants = true
+	selectedTextLabel.TextXAlignment = Enum.TextXAlignment.Left
+	local dropDownImage = Util.Create'ImageLabel'
+	{
+		Name = "DropDownImage",
+		Image = "rbxasset://textures/ui/Settings/DropDown/DropDown.png",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Size = UDim2.new(0,15,0,10),
+		Position = UDim2.new(1,-12,0.5,0),
+		ZIndex = 2,
+		Parent = this.DropDownFrame
+	};
+	this.DropDownImage = dropDownImage
+
+
+	---------------------- FUNCTIONS -----------------------------------
+	local function setSelection(index)
+		local shouldFireChanged = false
+		for i, selectionLabel in pairs(this.Selections) do
+			if i == index then
+				selectedTextLabel.Text = selectionLabel.Text
+				this.CurrentIndex = i
+
+				shouldFireChanged = true
+			end
+		end
+
+		if shouldFireChanged then
+			indexChangedEvent:Fire(index)
+		end
+	end
+
+	local function setSelectionByValue(value)
+		local shouldFireChanged = false
+		for i, selectionLabel in pairs(this.Selections) do
+			if selectionLabel.Text == value then
+				selectedTextLabel.Text = selectionLabel.Text
+				this.CurrentIndex = i
+
+				shouldFireChanged = true
+			end
+		end
+
+		if shouldFireChanged then
+			indexChangedEvent:Fire(this.CurrentIndex)
+		end
+		return shouldFireChanged
+	end
+
+	local function setIsFaded(isFaded)
+		if isFaded then
+			this.DropDownFrame.DropDownFrameTextLabel.TextTransparency = 0.5
+			this.DropDownFrame.ImageTransparency = 0.5
+			this.DropDownImage.ImageTransparency = 0.5
+		else
+			this.DropDownFrame.DropDownFrameTextLabel.TextTransparency = 0
+			this.DropDownFrame.ImageTransparency = 0
+			this.DropDownImage.ImageTransparency = 0
+		end
+	end
+
+
+	--------------------- PUBLIC FACING FUNCTIONS -----------------------
+	this.IndexChanged = indexChangedEvent.Event
+
+	function this:SetSelectionIndex(newIndex)
+		setSelection(newIndex)
+	end
+
+	function this:SetSelectionByValue(value)
+		return setSelectionByValue(value)
+	end
+
+	function this:ResetSelectionIndex()
+		this.CurrentIndex = nil
+		selectedTextLabel.Text = dropDownDefaultText
+		hideDropDownSelection()
+	end
+
+	function this:GetSelectedIndex()
+		return this.CurrentIndex
+	end
+
+	function this:SetZIndex(newZIndex)
+		this.DropDownFrame.ZIndex = newZIndex
+		dropDownImage.ZIndex = newZIndex
+		selectedTextLabel.ZIndex = newZIndex
+	end
+
+	function this:SetInteractable(value)
+		interactable = value
+		this.DropDownFrame.Selectable = interactable
+
+		if not interactable then
+			hideDropDownSelection()
+			setIsFaded(VRService.VREnabled)
+			if not VRService.VREnabled then
+				this:SetZIndex(1)
+			end
+		else
+			setIsFaded(false)
+			if not VRService.VREnabled then
+				this:SetZIndex(2)
+			end
+		end
+
+		dropDownButtonEnabled.Value = value and not active
+	end
+
+	function this:SetAutoLocalize(autoLocalize)
+		DropDownFullscreenFrame.AutoLocalize = autoLocalize
+	end
+
+	function this:UpdateDropDownList(dropDownStringTable)
+		lastStringTable = dropDownStringTable
+
+		if this.Selections then
+			for i = 1, #this.Selections do
+				this.Selections[i]:Destroy()
+			end
+		end
+
+		this.Selections = {}
+		this.SelectionInfo = {}
+
+		local vrEnabled = VRService.VREnabled
+		local font = vrEnabled and Enum.Font.SourceSansBold or Enum.Font.SourceSans
+		local textSize = vrEnabled and 36 or 24
+
+		local itemHeight = vrEnabled and 70 or 50
+		local itemSpacing = itemHeight + 1
+
+		local dropDownWidth = vrEnabled and 600 or 400
+		local subtitleTotalOffset = 0
+
+		for i,v in pairs(dropDownStringTable) do
+			local SelectionOverrideObject =	Util.Create'Frame'
+			{
+				BackgroundTransparency = 0.7,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1, 0, 1, 0)
+			};
+
+			local text = v
+			local subtitle = ''
+			local UseSubtitle = typeof(v) == 'table'
+			if UseSubtitle then
+				text = v.title
+				subtitle = v.subtitle
+				subtitleTotalOffset += DROPDOWN_SUBTITLE_OFFSET
+			end
+
+			local nextSelection
+
+			if UseSubtitle then
+				nextSelection = Util.Create'TextButton'
+				{
+					Name = "Selection" .. tostring(i),
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					AutoButtonColor = false,
+					TextYAlignment = Enum.TextYAlignment.Top,
+					Size = UDim2.new(1, -28, 0, itemHeight + DROPDOWN_SUBTITLE_OFFSET),
+					Position = UDim2.new(0,14,0, (i - 1) * (itemSpacing + DROPDOWN_SUBTITLE_OFFSET)),
+					TextColor3 = VRService.VREnabled and SELECTION_TEXT_COLOR_NORMAL_VR or SELECTION_TEXT_COLOR_NORMAL,
+					Font = font,
+					TextSize = textSize,
+					Text = text,
+					ZIndex = 10,
+					SelectionImageObject = SelectionOverrideObject,
+					Parent = DropDownScrollingFrame
+				}
+
+				local subtitleSize = 0.8
+				local subtitlePadding = 15
+				local _Subtitle = Util.Create'TextLabel'
+				{
+					Name = "Subtitle" .. tostring(i),
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Size = UDim2.new(1, -28, 0, itemHeight * subtitleSize),
+					Position = UDim2.new(0,14,0, subtitlePadding),
+					TextColor3 = VRService.VREnabled and SELECTION_TEXT_COLOR_NORMAL_VR or SELECTION_TEXT_COLOR_NORMAL,
+					Font = font,
+					TextSize = textSize * subtitleSize,
+					Text = subtitle,
+					ZIndex = 10,
+					Parent = nextSelection
+				}
+			else
+				nextSelection = Util.Create'TextButton'
+				{
+					Name = "Selection" .. tostring(i),
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					AutoButtonColor = false,
+					Size = UDim2.new(1, -28, 0, itemHeight),
+					Position = UDim2.new(0,14,0, (i - 1) * itemSpacing),
+					TextColor3 = VRService.VREnabled and SELECTION_TEXT_COLOR_NORMAL_VR or SELECTION_TEXT_COLOR_NORMAL,
+					Font = font,
+					TextSize = textSize,
+					Text = v,
+					ZIndex = 10,
+					SelectionImageObject = SelectionOverrideObject,
+					Parent = DropDownScrollingFrame
+				}
+			end
+
+			if i == startPosition then
+				this.CurrentIndex = i
+				selectedTextLabel.Text = text
+				nextSelection.TextColor3 = SELECTION_TEXT_COLOR_HIGHLIGHTED
+			elseif not startPosition and i == 1 then
+				nextSelection.TextColor3 = SELECTION_TEXT_COLOR_HIGHLIGHTED
+			end
+
+			local clicked = function()
+				selectedTextLabel.Text = nextSelection.Text
+				hideDropDownSelection()
+				this.CurrentIndex = i
+				indexChangedEvent:Fire(i)
+			end
+
+			nextSelection.MouseButton1Click:Connect(clicked)
+
+			nextSelection.MouseEnter:Connect(function()
+				if usesSelectedObject() then
+					GuiService.SelectedCoreObject = nextSelection
+				end
+			end)
+
+			this.Selections[i] = nextSelection
+			this.SelectionInfo[nextSelection] = {Clicked = clicked}
+		end
+
+		GuiService:RemoveSelectionGroup(guid)
+		GuiService:AddSelectionTuple(guid, unpack(this.Selections))
+
+		DropDownScrollingFrame.CanvasSize = UDim2.new(1,-20,0,#dropDownStringTable * itemSpacing + subtitleTotalOffset)
+
+		local function updateDropDownSize()
+			if DropDownScrollingFrame.CanvasSize.Y.Offset < (DropDownFullscreenFrame.AbsoluteSize.Y - 10) then
+				DropDownSelectionFrame.Size = UDim2.new(0, dropDownWidth,
+					0,DropDownScrollingFrame.CanvasSize.Y.Offset + SCROLLING_FRAME_PIXEL_OFFSET)
+			else
+				DropDownSelectionFrame.Size = UDim2.new(0, dropDownWidth, 0.9, 0)
+			end
+		end
+
+		DropDownFullscreenFrame.Changed:Connect(function(prop)
+			if prop ~= "AbsoluteSize" then return end
+			updateDropDownSize()
+		end)
+
+		updateDropDownSize()
+	end
+
+	----------------------- CONNECTIONS/SETUP --------------------------------
+	this:UpdateDropDownList(dropDownStringTable)
+
+	DropDownFullscreenFrame.MouseButton1Click:Connect(hideDropDownSelection)
+
+	settingsHub.PoppedMenu:Connect(function(poppedMenu)
+		if poppedMenu == DropDownFullscreenFrame then
+			hideDropDownSelection()
+		end
+	end)
+
+	return this
+end
+
+
+local function CreateSelector(selectionStringTable, startPosition)
+
+	-------------------- VARIABLES ------------------------
+	local lastInputDirection = 0
+	local TweenTime = 0.15
+
+	-------------------- SETUP ------------------------
+	local this = {}
+	this.HubRef = nil
+	this.SetSelectionIndex = nil
+
+	if type(selectionStringTable) ~= "table" then
+		error("CreateSelector selectionStringTable (first arg) is not a table", 2)
+		return this
+	end
+
+	local indexChangedEvent = Instance.new("BindableEvent")
+	indexChangedEvent.Name = "IndexChanged"
+
+	local interactable = true
+
+	this.CurrentIndex = 0
+
+	----------------- GUI SETUP ------------------------
+	this.SelectorFrame = Util.Create'ImageButton'
+	{
+		Name = "Selector",
+		Image = "",
+		AutoButtonColor = false,
+		NextSelectionLeft = this.SelectorFrame,
+		NextSelectionRight = this.SelectorFrame,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.6,0,0,50),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(1, 0.5),
+		ZIndex = 2,
+		SelectionImageObject = noSelectionObject
+	};
+
+	local leftButton = Util.Create'ImageButton'
+	{
+		Name = "LeftButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0,0,0.5,0),
+		Size =  UDim2.new(0,50,0,50),
+		Image =  "",
+		ZIndex = 3,
+		Selectable = false,
+		SelectionImageObject = noSelectionObject,
+		Parent = this.SelectorFrame
+	};
+	local rightButton = Util.Create'ImageButton'
+	{
+		Name = "RightButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1,0,0.5,0),
+		Size =  UDim2.new(0,50,0,50),
+		Image =  "",
+		ZIndex = 3,
+		Selectable = false,
+		SelectionImageObject = noSelectionObject,
+		Parent = this.SelectorFrame
+	};
+
+	local leftButtonImage = Util.Create'ImageLabel'
+	{
+		Name = "LeftButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5,0,0.5,0),
+		Size =  UDim2.new(0,18,0,30),
+		Image =  "rbxasset://textures/ui/Settings/Slider/Left.png",
+		ImageColor3 = ARROW_COLOR,
+		ZIndex = 4,
+		Parent = leftButton
+	};
+	local rightButtonImage = Util.Create'ImageLabel'
+	{
+		Name = "RightButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5,0,0.5,0),
+		Size =  UDim2.new(0,18,0,30),
+		Image =  "rbxasset://textures/ui/Settings/Slider/Right.png",
+		ImageColor3 = ARROW_COLOR,
+		ZIndex = 4,
+		Parent = rightButton
+	};
+	if not UserInputService.TouchEnabled then
+		local applyNormal, applyHover =
+			function(instance)
+				instance.ImageColor3 = ARROW_COLOR
+			end,
+			function(instance) 
+				instance.ImageColor3 = ARROW_COLOR_HOVER
+			end
+		addHoverState(leftButton, leftButtonImage, applyNormal, applyHover)
+		addHoverState(rightButton, rightButtonImage, applyNormal, applyHover)
+	end
+
+
+	this.Selections = {}
+	local isSelectionLabelVisible = {}
+	local isAutoSelectButton = {}
+
+	local autoSelectButton = Util.Create'ImageButton'{
+		Name = 'AutoSelectButton',
+		BackgroundTransparency = 1,
+		Image = '',
+		Position = UDim2.new(0, leftButton.Size.X.Offset, 0, 0),
+		Size = UDim2.new(1, leftButton.Size.X.Offset * -2, 1, 0),
+		Parent = this.SelectorFrame,
+		ZIndex = 2,
+		SelectionImageObject = noSelectionObject
+	}
+	autoSelectButton.MouseButton1Click:Connect(function()
+		if not interactable then return end
+		if #this.Selections <= 1 then return end
+		local newIndex = this.CurrentIndex + 1
+		if newIndex > #this.Selections then
+			newIndex = 1
+		end
+		this:SetSelectionIndex(newIndex)
+		if usesSelectedObject() then
+			GuiService.SelectedCoreObject = this.SelectorFrame
+		end
+	end)
+	isAutoSelectButton[autoSelectButton] = true
+
+	---------------------- FUNCTIONS -----------------------------------
+	local function setSelection(index, direction)
+		for i, selectionLabel in pairs(this.Selections) do
+			local isSelected = (i == index)
+
+			local leftButtonUDim = UDim2.new(0,leftButton.Size.X.Offset,0,0)
+			local tweenPos = UDim2.new(0,leftButton.Size.X.Offset * direction * 3,0,0)
+
+			if isSelectionLabelVisible[selectionLabel] then
+				tweenPos = UDim2.new(0,leftButton.Size.X.Offset * -direction * 3,0,0)
+			end
+
+			if tweenPos.X.Offset < 0 then
+				tweenPos = UDim2.new(0,tweenPos.X.Offset + (selectionLabel.AbsoluteSize.X/4),0,0)
+			end
+
+			if isSelected then
+				isSelectionLabelVisible[selectionLabel] = true
+				selectionLabel.Position = tweenPos
+				selectionLabel.Visible = true
+				PropertyTweener(selectionLabel, "TextTransparency", 1, 0, TweenTime * 1.1, EaseOutQuad)
+				if selectionLabel:IsDescendantOf(game) then
+					selectionLabel:TweenPosition(leftButtonUDim, Enum.EasingDirection.In, Enum.EasingStyle.Quad, TweenTime, true)
+				else
+					selectionLabel.Position = leftButtonUDim
+				end
+				this.CurrentIndex = i
+				indexChangedEvent:Fire(index)
+			elseif isSelectionLabelVisible[selectionLabel] then
+				isSelectionLabelVisible[selectionLabel] = false
+				PropertyTweener(selectionLabel, "TextTransparency", 0, 1, TweenTime * 1.1, EaseOutQuad)
+				if selectionLabel:IsDescendantOf(game) then
+					selectionLabel:TweenPosition(tweenPos, Enum.EasingDirection.Out, Enum.EasingStyle.Quad, TweenTime * 0.9, true)
+				else
+					selectionLabel.Position = tweenPos
+				end
+			end
+		end
+	end
+
+	local function stepFunc(inputObject, step)
+		if not interactable then return end
+
+		if inputObject ~= nil and inputObject.UserInputType ~= Enum.UserInputType.MouseButton1 and
+			inputObject.UserInputType ~= Enum.UserInputType.Gamepad1 and inputObject.UserInputType ~= Enum.UserInputType.Gamepad2 and
+			inputObject.UserInputType ~= Enum.UserInputType.Gamepad3 and inputObject.UserInputType ~= Enum.UserInputType.Gamepad4 and
+			inputObject.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+		if usesSelectedObject() then
+			GuiService.SelectedCoreObject = this.SelectorFrame
+		end
+
+		local newIndex = step + this.CurrentIndex
+
+		local direction = 0
+		if newIndex > this.CurrentIndex then
+			direction = 1
+		else
+			direction = -1
+		end
+
+		if newIndex > #this.Selections then
+			newIndex = 1
+		elseif newIndex < 1 then
+			newIndex = #this.Selections
+		end
+
+		setSelection(newIndex, direction)
+	end
+
+	local guiServiceCon = nil
+	local function connectToGuiService()
+		guiServiceCon = GuiService:GetPropertyChangedSignal("SelectedCoreObject"):Connect(function()
+			if #this.Selections <= 0 then
+				return
+			end
+
+			if GuiService.SelectedCoreObject == this.SelectorFrame then
+				this.Selections[this.CurrentIndex].TextTransparency = 0
+			else
+				if GuiService.SelectedCoreObject ~= nil and isAutoSelectButton[GuiService.SelectedCoreObject] then
+					if VRService.VREnabled then
+						this.Selections[this.CurrentIndex].TextTransparency = 0
+					else
+						GuiService.SelectedCoreObject = this.SelectorFrame
+					end
+				else
+					this.Selections[this.CurrentIndex].TextTransparency = 0.5
+				end
+			end
+		end)
+	end
+
+	--------------------- PUBLIC FACING FUNCTIONS -----------------------
+	this.IndexChanged = indexChangedEvent.Event
+
+	function this:SetSelectionIndex(newIndex)
+		setSelection(newIndex, 1)
+	end
+
+	function this:GetSelectedIndex()
+		return this.CurrentIndex
+	end
+
+	function this:SetZIndex(newZIndex)
+		leftButton.ZIndex = newZIndex
+		rightButton.ZIndex = newZIndex
+		leftButtonImage.ZIndex = newZIndex
+		rightButtonImage.ZIndex = newZIndex
+
+		for i = 1, #this.Selections do
+			this.Selections[i].ZIndex = newZIndex
+		end
+	end
+
+	function this:SetInteractable(value)
+		interactable = value
+		this.SelectorFrame.Selectable = interactable
+
+		leftButton.Active = interactable
+		rightButton.Active = interactable
+
+		if not interactable then
+			for i, selectionLabel in pairs(this.Selections) do
+				selectionLabel.TextColor3 = Color3.fromRGB(49, 49, 49)
+			end
+			leftButtonImage.ImageColor3 = ARROW_COLOR_INACTIVE
+			rightButtonImage.ImageColor3 = ARROW_COLOR_INACTIVE
+		else
+			for i, selectionLabel in pairs(this.Selections) do
+				selectionLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+			end
+			leftButtonImage.ImageColor3 = ARROW_COLOR
+			rightButtonImage.ImageColor3 = ARROW_COLOR
+		end
+	end
+
+	function this:UpdateOptions(selectionStringTable)
+		for i,v in pairs(this.Selections) do
+			v:Destroy()
+		end
+
+		isSelectionLabelVisible = {}
+		this.Selections = {}
+
+		for i,v in pairs(selectionStringTable) do
+			local nextSelection = Util.Create'TextLabel'
+			{
+				Name = "Selection" .. tostring(i),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Size = UDim2.new(1,leftButton.Size.X.Offset * -2, 1, 0),
+				Position = UDim2.new(1,0,0,0),
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				TextYAlignment = Enum.TextYAlignment.Center,
+				TextTransparency = 0.5,
+				Font = Enum.Font.SourceSans,
+				TextSize = 24,
+				Text = v,
+				ZIndex = 2,
+				Visible = false,
+				Parent = this.SelectorFrame
+			};
+			if isTenFootInterface() then
+				nextSelection.TextSize = 36
+			end
+
+			if i == startPosition then
+				this.CurrentIndex = i
+				nextSelection.Position = UDim2.new(0,leftButton.Size.X.Offset,0,0)
+				nextSelection.Visible = true
+
+				isSelectionLabelVisible[nextSelection] = true
+			else
+				isSelectionLabelVisible[nextSelection] = false
+			end
+
+			this.Selections[i] = nextSelection
+		end
+
+		local hasMoreThanOneSelection = #this.Selections > 1
+		leftButton.Visible = hasMoreThanOneSelection
+		rightButton.Visible = hasMoreThanOneSelection
+	end
+
+	--------------------- SETUP -----------------------
+	local function onVREnabled(prop)
+		if prop ~= "VREnabled" then
+			return
+		end
+		local vrEnabled = VRService.VREnabled
+		leftButton.Selectable = vrEnabled
+		rightButton.Selectable = vrEnabled
+		autoSelectButton.Selectable = vrEnabled
+	end
+	VRService.Changed:Connect(onVREnabled)
+	onVREnabled("VREnabled")
+
+	leftButton.InputBegan:Connect(function(inputObject)
+		if inputObject.UserInputType == Enum.UserInputType.Touch then
+			stepFunc(nil, -1)
+		end
+	end)
+	leftButton.MouseButton1Click:Connect(function()
+		if not UserInputService.TouchEnabled then
+			stepFunc(nil, -1)
+		end
+	end)
+	rightButton.InputBegan:Connect(function(inputObject)
+		if inputObject.UserInputType == Enum.UserInputType.Touch then
+			stepFunc(nil, 1)
+		end
+	end)
+	rightButton.MouseButton1Click:Connect(function()
+		if not UserInputService.TouchEnabled then
+			stepFunc(nil, 1)
+		end
+	end)
+
+	local isInTree = true
+	this:UpdateOptions(selectionStringTable)
+
+	UserInputService.InputBegan:Connect(function(inputObject)
+		if not interactable then return end
+		if not isInTree then return end
+
+		if inputObject.UserInputType ~= Enum.UserInputType.Gamepad1 and inputObject.UserInputType ~= Enum.UserInputType.Keyboard then return end
+		if GuiService.SelectedCoreObject ~= this.SelectorFrame then return end
+
+		if inputObject.KeyCode == Enum.KeyCode.DPadLeft or inputObject.KeyCode == Enum.KeyCode.Left or inputObject.KeyCode == Enum.KeyCode.A then
+			stepFunc(inputObject, -1)
+		elseif inputObject.KeyCode == Enum.KeyCode.DPadRight or inputObject.KeyCode == Enum.KeyCode.Right or inputObject.KeyCode == Enum.KeyCode.D then
+			stepFunc(inputObject, 1)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(inputObject)
+		if not interactable then return end
+		if not isInTree then
+			lastInputDirection = 0
+			return
+		end
+
+		if inputObject.UserInputType ~= Enum.UserInputType.Gamepad1 then return end
+
+		local selected = GuiService.SelectedCoreObject
+		if not selected or not selected:IsDescendantOf(this.SelectorFrame.Parent) then return end
+
+		if inputObject.KeyCode ~= Enum.KeyCode.Thumbstick1 then return end
+
+
+		if inputObject.Position.X > CONTROLLER_THUMBSTICK_DEADZONE and inputObject.Delta.X > 0 and lastInputDirection ~= 1 then
+			lastInputDirection = 1
+			stepFunc(inputObject, lastInputDirection)
+		elseif inputObject.Position.X < -CONTROLLER_THUMBSTICK_DEADZONE and inputObject.Delta.X < 0 and lastInputDirection ~= -1 then
+			lastInputDirection = -1
+			stepFunc(inputObject, lastInputDirection)
+		elseif math.abs(inputObject.Position.X) < CONTROLLER_THUMBSTICK_DEADZONE then
+			lastInputDirection = 0
+		end
+	end)
+
+	this.SelectorFrame.AncestryChanged:Connect(function(child, parent)
+		isInTree = parent
+		if not isInTree then
+			if guiServiceCon then guiServiceCon:Disconnect() end
+		else
+			connectToGuiService()
+		end
+	end)
+
+	local function onResized(viewportSize, portrait)
+		local textSize = 0
+		if portrait then
+			textSize = 16
+		else
+			textSize = isTenFootInterface() and 36 or 24
+		end
+
+		for i, selection in pairs(this.Selections) do
+			selection.TextSize = textSize
+		end
+	end
+	addOnResizedCallback(this.SelectorFrame, onResized)
+
+	connectToGuiService()
+
+	return this
+end
+
+local function ShowAlert(alertMessage, okButtonText, settingsHub, okPressedFunc, hasBackground)
+	local parent = CoreGui.RobloxGui
+	if parent:FindFirstChild("AlertViewFullScreen") then return end
+
+	--Declare AlertViewBacking so onVREnabled can take it as an upvalue
+	local AlertViewBacking = nil
+
+	--Handle VR toggle while alert is open
+	--Future consideration: maybe rebuild gui when VR toggles mid-game; right now only subpaneling is handled rather than visual style
+	local function onVREnabled(prop)
+		if prop ~= "VREnabled" then return end
+		local Panel3D, settingsPanel = nil, nil
+		if VRService.VREnabled then
+			Panel3D = require(CoreGui.RobloxGui.Modules.VR.Panel3D) :: any
+			settingsPanel = Panel3D.Get("SettingsMenu")
+			parent = settingsPanel:GetGUI()
+		else
+			parent = CoreGui.RobloxGui
+		end
+		if AlertViewBacking and AlertViewBacking.Parent ~= nil then
+			AlertViewBacking.Parent = parent
+			if VRService.VREnabled then
+				settingsPanel:SetSubpanelDepth(AlertViewBacking, 0.5)
+			end
+		end
+	end
+	local vrEnabledConn = VRService.Changed:Connect(onVREnabled)
+
+	AlertViewBacking = Util.Create'ImageLabel'
+	{
+		Name = "AlertViewBacking",
+		Image = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButton.png",
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(8,6,46,44),
+		BackgroundTransparency = 1,
+
+		ImageTransparency = 1,
+		Size = UDim2.new(0, 400, 0, 350),
+		Position = UDim2.new(0.5, -200, 0.5, -175),
+		ZIndex = 9,
+		Parent = parent
+	};
+	onVREnabled("VREnabled")
+	if hasBackground or VRService.VREnabled then
+		AlertViewBacking.ImageTransparency = 0
+	else
+		AlertViewBacking.Size = UDim2.new(0.8, 0, 0, 350)
+		AlertViewBacking.Position = UDim2.new(0.1, 0, 0.1, 0)
+	end
+
+	if CoreGui.RobloxGui.AbsoluteSize.Y <= AlertViewBacking.Size.Y.Offset then
+		AlertViewBacking.Size = UDim2.new(AlertViewBacking.Size.X.Scale, AlertViewBacking.Size.X.Offset,
+			AlertViewBacking.Size.Y.Scale, CoreGui.RobloxGui.AbsoluteSize.Y)
+		AlertViewBacking.Position = UDim2.new(AlertViewBacking.Position.X.Scale, -AlertViewBacking.Size.X.Offset/2, 0.5, -AlertViewBacking.Size.Y.Offset/2)
+	end
+
+	local _AlertViewText = Util.Create'TextLabel'
+	{
+		Name = "AlertViewText",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.95, 0, 0.6, 0),
+		Position = UDim2.new(0.025, 0, 0.05, 0),
+		Font = Enum.Font.SourceSansBold,
+		TextSize = 36,
+		Text = alertMessage,
+		TextWrapped = true,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		ZIndex = 10,
+		Parent = AlertViewBacking
+	};
+
+	local _SelectionOverrideObject = Util.Create'ImageLabel'
+	{
+		Image = "",
+		BackgroundTransparency = 1
+	};
+
+	local removeId = HttpService:GenerateGUID(false)
+
+	local destroyAlert = function(actionName, inputState)
+		if VRService.VREnabled and (inputState == Enum.UserInputState.Begin or inputState == Enum.UserInputState.Cancel) then
+			return
+		end
+		if not AlertViewBacking then
+			return
+		end
+		if VRService.VREnabled then
+			local Panel3D = require(CoreGui.RobloxGui.Modules.VR.Panel3D) :: any
+			Panel3D.Get("SettingsMenu"):SetSubpanelDepth(AlertViewBacking, 0)
+		end
+		AlertViewBacking:Destroy()
+		AlertViewBacking = nil
+		if okPressedFunc then
+			okPressedFunc()
+		end
+		ContextActionService:UnbindCoreAction(removeId)
+		GuiService.SelectedCoreObject = nil
+		if settingsHub then
+			settingsHub:ShowBar()
+		end
+		if vrEnabledConn then
+			vrEnabledConn:Disconnect()
+		end
+	end
+
+	local AlertViewButtonSize = UDim2.new(1, -20, 0, 60)
+	local AlertViewButtonPosition = UDim2.new(0, 10, 0.65, 0)
+	if not hasBackground then
+		AlertViewButtonSize = UDim2.new(0, 200, 0, 50)
+		AlertViewButtonPosition = UDim2.new(0.5, -100, 0.65, 0)
+	end
+
+	local AlertViewButton, AlertViewText = MakeButton("AlertViewButton", okButtonText, AlertViewButtonSize, destroyAlert)
+	AlertViewButton.Position = AlertViewButtonPosition
+	AlertViewButton.NextSelectionLeft = AlertViewButton
+	AlertViewButton.NextSelectionRight = AlertViewButton
+	AlertViewButton.NextSelectionUp = AlertViewButton
+	AlertViewButton.NextSelectionDown = AlertViewButton
+	AlertViewButton.ZIndex = 9
+	AlertViewText.ZIndex = AlertViewButton.ZIndex
+	AlertViewButton.Parent = AlertViewBacking
+
+	if usesSelectedObject() then
+		GuiService.SelectedCoreObject = AlertViewButton
+	end
+
+	GuiService.SelectedCoreObject = AlertViewButton
+
+	ContextActionService:BindCoreAction(removeId, destroyAlert, false, Enum.KeyCode.Escape, Enum.KeyCode.ButtonB, Enum.KeyCode.ButtonA)
+
+	if settingsHub and not VRService.VREnabled then
+		settingsHub:HideBar()
+		settingsHub.Pages.CurrentPage:Hide(1, 1)
+	end
+end
+
+local function CreateNewSlider(numOfSteps, startStep, minStep)
+	-------------------- SETUP ------------------------
+	local this = {}
+
+	local spacing = 4
+	local steps = tonumber(numOfSteps)
+	local currentStep = startStep
+
+	local lastInputDirection = 0
+	local timeAtLastInput = nil
+
+	local interactable = true
+
+	local renderStepBindName = HttpService:GenerateGUID(false)
+
+	-- this is done to prevent using these values below (trying to keep the variables consistent)
+	numOfSteps = ""
+	startStep = ""
+
+	if steps <= 0 then
+		error("CreateNewSlider failed because numOfSteps (first arg) is 0 or negative, please supply a positive integer", 2)
+		return
+	end
+
+	local valueChangedEvent = Instance.new("BindableEvent")
+	valueChangedEvent.Name = "ValueChanged"
+
+	----------------- GUI SETUP ------------------------
+	this.SliderFrame = Util.Create'ImageButton'
+	{
+		Name = "Slider",
+		Image = "",
+		AutoButtonColor = false,
+		NextSelectionLeft = this.SliderFrame,
+		NextSelectionRight = this.SliderFrame,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0.6, 0, 0, 50),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(1, 0.5),
+		SelectionImageObject = noSelectionObject,
+		ZIndex = 2
+	};
+
+	this.StepsContainer = Util.Create "Frame"
+	{
+		Name = "StepsContainer",
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		Size = UDim2.new(1, -100, 1, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 1,
+		Parent = this.SliderFrame,
+	}
+
+	local leftButton = Util.Create'ImageButton'
+	{
+		Name = "LeftButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0,0,0.5,0),
+		Size =  UDim2.new(0,50,0,50),
+		Image =  "",
+		ZIndex = 3,
+		Selectable = false,
+		SelectionImageObject = noSelectionObject,
+		Active = true,
+		Parent = this.SliderFrame
+	};
+	local rightButton = Util.Create'ImageButton'
+	{
+		Name = "RightButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1,0,0.5,0),
+		Size =  UDim2.new(0,50,0,50),
+		Image =  "",
+		ZIndex = 3,
+		Selectable = false,
+		SelectionImageObject = noSelectionObject,
+		Active = true,
+		Parent = this.SliderFrame
+	};
+
+	local leftButtonImage = Util.Create'ImageLabel'
+	{
+		Name = "LeftButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5,0,0.5,0),
+		Size =  UDim2.new(0,30,0,30),
+		Image =  "rbxasset://textures/ui/Settings/Slider/Less.png",
+		ZIndex = 4,
+		Parent = leftButton,
+		ImageColor3 = UserInputService.TouchEnabled and ARROW_COLOR_TOUCH or ARROW_COLOR
+	};
+	local rightButtonImage = Util.Create'ImageLabel'
+	{
+		Name = "RightButton",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5,0,0.5,0),
+		Size =  UDim2.new(0,30,0,30),
+		Image =  "rbxasset://textures/ui/Settings/Slider/More.png",
+		ZIndex = 4,
+		Parent = rightButton,
+		ImageColor3 = UserInputService.TouchEnabled and ARROW_COLOR_TOUCH or ARROW_COLOR
+	};
+	if not UserInputService.TouchEnabled then
+		local onNormalButtonState, onHoverButtonState =
+			function(instance) 
+				instance.ImageColor3 = ARROW_COLOR
+			end,
+			function(instance) 
+				instance.ImageColor3 = ARROW_COLOR_HOVER
+			end
+		addHoverState(leftButton, leftButtonImage, onNormalButtonState, onHoverButtonState)
+		addHoverState(rightButton, rightButtonImage, onNormalButtonState, onHoverButtonState)
+	end
+
+	this.Steps = {}
+
+	local stepXScale = 1 / steps
+
+	for i = 1, steps do
+		local nextStep = Util.Create'ImageButton'
+		{
+			Name = "Step" .. tostring(i),
+			BackgroundColor3 = SELECTED_COLOR,
+			BackgroundTransparency = 0.36,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+			Active = false,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new((i - 1) * stepXScale, spacing / 2, 0.5, 0),
+			Size =  UDim2.new(stepXScale,-spacing, 24 / 50, 0),
+			Image =  "",
+			ZIndex = 3,
+			Selectable = false,
+			ImageTransparency = 0.36,
+			Parent = this.StepsContainer,
+			SelectionImageObject = noSelectionObject
+		};
+
+		if i > currentStep then
+			nextStep.BackgroundColor3 = NON_SELECTED_COLOR
+		end
+
+		if i == 1 or i == steps then
+			nextStep.BackgroundTransparency = 1
+			nextStep.ScaleType = Enum.ScaleType.Slice
+			nextStep.SliceCenter = Rect.new(3,3,32,21)
+
+			if i <= currentStep then
+				if i == 1 then
+					nextStep.Image = SELECTED_LEFT_IMAGE
+				else
+					nextStep.Image = SELECTED_RIGHT_IMAGE
+				end
+			else
+				if i == 1 then
+					nextStep.Image = NON_SELECTED_LEFT_IMAGE
+				else
+					nextStep.Image = NON_SELECTED_RIGHT_IMAGE
+				end
+			end
+		end
+
+		this.Steps[#this.Steps + 1] = nextStep
+	end
+
+
+	------------------- FUNCTIONS ---------------------
+	local function hideSelection()
+		for i = 1, steps do
+			this.Steps[i].BackgroundColor3 = NON_SELECTED_COLOR
+			if i == 1 then
+				this.Steps[i].Image = NON_SELECTED_LEFT_IMAGE
+			elseif i == steps then
+				this.Steps[i].Image = NON_SELECTED_RIGHT_IMAGE
+			end
+		end
+	end
+	local function showSelection()
+		for i = 1, steps do
+			if i > currentStep then break end
+			this.Steps[i].BackgroundColor3 = SELECTED_COLOR
+			if i == 1 then
+				this.Steps[i].Image = SELECTED_LEFT_IMAGE
+			elseif i == steps then
+				this.Steps[i].Image = SELECTED_RIGHT_IMAGE
+			end
+		end
+	end
+	local function modifySelection(alpha)
+		for i = 1, steps do
+			if i == 1 or i == steps then
+				this.Steps[i].ImageTransparency = alpha
+			else
+				this.Steps[i].BackgroundTransparency = alpha
+			end
+		end
+	end
+
+	local function setCurrentStep(newStepPosition)
+		if not minStep then minStep = 0 end
+
+		leftButton.Visible = true
+		rightButton.Visible = true
+
+		if newStepPosition <= minStep then
+			newStepPosition = minStep
+			leftButton.Visible = false
+		end
+		if newStepPosition >= steps then
+			newStepPosition = steps
+			rightButton.Visible = false
+		end
+
+		if currentStep == newStepPosition then return end
+
+		currentStep = newStepPosition
+
+		hideSelection()
+		showSelection()
+
+		timeAtLastInput = tick()
+		valueChangedEvent:Fire(currentStep)
+	end
+
+	local function isActivateEvent(inputObject)
+		if not inputObject then return false end
+		return inputObject.UserInputType == Enum.UserInputType.MouseButton1 or inputObject.UserInputType == Enum.UserInputType.Touch or (inputObject.UserInputType == Enum.UserInputType.Gamepad1 and inputObject.KeyCode == Enum.KeyCode.ButtonA)
+	end
+	local function mouseDownFunc(inputObject, newStepPos, repeatAction)
+		if not interactable then return end
+
+		if inputObject == nil then return end
+
+		if not isActivateEvent(inputObject) then return end
+
+		if usesSelectedObject() and not VRService.VREnabled then
+			GuiService.SelectedCoreObject = this.SliderFrame
+		end
+
+		if not VRService.VREnabled then
+			if repeatAction then
+				lastInputDirection = newStepPos - currentStep
+			else
+				lastInputDirection = 0
+
+				local mouseInputMovedCon = nil
+				local mouseInputEndedCon = nil
+
+				mouseInputMovedCon = UserInputService.InputChanged:Connect(function(inputObject)
+					if inputObject.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+
+					local mousePos = inputObject.Position.X
+					for i = 1, steps do
+						local stepPosition = this.Steps[i].AbsolutePosition.X
+						local stepSize = this.Steps[i].AbsoluteSize.X
+						if mousePos >= stepPosition and mousePos <= stepPosition + stepSize then
+							setCurrentStep(i)
+							break
+						elseif i == 1 and mousePos < stepPosition then
+							setCurrentStep(0)
+							break
+						elseif i == steps and mousePos >= stepPosition then
+							setCurrentStep(i)
+							break
+						end
+					end
+				end)
+				mouseInputEndedCon = UserInputService.InputEnded:Connect(function(inputObject)
+					if not isActivateEvent(inputObject) then return end
+
+					lastInputDirection = 0
+					mouseInputEndedCon:Disconnect()
+					mouseInputMovedCon:Disconnect()
+				end)
+			end
+		else
+			lastInputDirection = 0
+		end
+
+		setCurrentStep(newStepPos)
+	end
+
+	local function mouseUpFunc(inputObject)
+		if not interactable then return end
+		if not isActivateEvent(inputObject) then return end
+
+		lastInputDirection = 0
+	end
+
+	--------------------- PUBLIC FACING FUNCTIONS -----------------------
+	this.ValueChanged = valueChangedEvent.Event
+
+	function this:SetValue(newValue)
+		setCurrentStep(newValue)
+	end
+
+	function this:GetValue()
+		return currentStep
+	end
+
+	function this:SetInteractable(value)
+		lastInputDirection = 0
+		interactable = value
+		this.SliderFrame.Selectable = value
+		if not interactable then
+			hideSelection()
+		else
+			showSelection()
+		end
+	end
+
+	function this:SetZIndex(newZIndex)
+		leftButton.ZIndex = newZIndex
+		rightButton.ZIndex = newZIndex
+		leftButtonImage.ZIndex = newZIndex
+		rightButtonImage.ZIndex = newZIndex
+
+		for i = 1, #this.Steps do
+			this.Steps[i].ZIndex = newZIndex
+		end
+	end
+
+	function this:SetMinStep(newMinStep)
+		if newMinStep >= 0 and newMinStep <= steps then
+			minStep = newMinStep
+		end
+
+		if currentStep <= minStep then
+			currentStep = minStep
+			leftButton.Visible = false
+		end
+		if currentStep >= steps then
+			currentStep = steps
+			rightButton.Visible = false
+		end
+	end
+
+	--------------------- SETUP -----------------------
+
+	leftButton.InputBegan:Connect(function(inputObject) mouseDownFunc(inputObject, currentStep - 1, true) end)
+	leftButton.InputEnded:Connect(function(inputObject) mouseUpFunc(inputObject) end)
+	rightButton.InputBegan:Connect(function(inputObject) mouseDownFunc(inputObject, currentStep + 1, true) end)
+	rightButton.InputEnded:Connect(function(inputObject) mouseUpFunc(inputObject) end)
+
+	local function onVREnabled(prop)
+		if prop ~= "VREnabled" then
+			return
+		end
+		if VRService.VREnabled then
+			leftButton.Selectable = interactable
+			rightButton.Selectable = interactable
+			this.SliderFrame.Selectable = interactable
+
+			for i = 1, steps do
+				this.Steps[i].Selectable = interactable
+				this.Steps[i].Active = interactable
+			end
+		else
+			leftButton.Selectable = false
+			rightButton.Selectable = false
+			this.SliderFrame.Selectable = interactable
+			for i = 1, steps do
+				this.Steps[i].Selectable = false
+				this.Steps[i].Active = false
+			end
+		end
+	end
+	VRService.Changed:Connect(onVREnabled)
+	onVREnabled("VREnabled")
+
+	for i = 1, steps do
+		this.Steps[i].InputBegan:Connect(function(inputObject)
+			mouseDownFunc(inputObject, i)
+		end)
+		this.Steps[i].InputEnded:Connect(function(inputObject)
+			mouseUpFunc(inputObject) end)
+	end
+
+	this.SliderFrame.InputBegan:Connect(function(inputObject)
+		if VRService.VREnabled then
+			local selected = GuiService.SelectedCoreObject
+			if not selected or not selected:IsDescendantOf(this.SliderFrame.Parent) then return end
+		end
+		mouseDownFunc(inputObject, currentStep)
+	end)
+	this.SliderFrame.InputEnded:Connect(function(inputObject)
+		if VRService.VREnabled then
+			local selected = GuiService.SelectedCoreObject
+			if not selected or not selected:IsDescendantOf(this.SliderFrame.Parent) then return end
+		end
+		mouseUpFunc(inputObject)
+	end)
+
+
+	local stepSliderFunc = function()
+		if timeAtLastInput == nil then return end
+
+		local currentTime = tick()
+		local timeSinceLastInput = currentTime - timeAtLastInput
+		if timeSinceLastInput >= CONTROLLER_SCROLL_DELTA then
+			setCurrentStep(currentStep + lastInputDirection)
+		end
+	end
+
+	local isInTree = true
+
+	local navigateLeft = -1 --these are just for differentiation, the actual value isn't important as long as they coerce to boolean true (all numbers do in Lua)
+	local navigateRight = 1
+	local navigationKeyCodes = {
+		[Enum.KeyCode.Thumbstick1] = true, --thumbstick can be either direction
+		[Enum.KeyCode.DPadLeft] = navigateLeft,
+		[Enum.KeyCode.DPadRight] = navigateRight,
+		[Enum.KeyCode.Left] = navigateLeft,
+		[Enum.KeyCode.Right] = navigateRight,
+		[Enum.KeyCode.A] = navigateLeft,
+		[Enum.KeyCode.D] = navigateRight,
+		[Enum.KeyCode.ButtonA] = true --buttonA can be either direction
+	}
+	UserInputService.InputBegan:Connect(function(inputObject)
+		if not interactable then return end
+		if not isInTree then return end
+
+		if inputObject.UserInputType ~= Enum.UserInputType.Gamepad1 and inputObject.UserInputType ~= Enum.UserInputType.Keyboard then return end
+		local selected = GuiService.SelectedCoreObject
+		if not selected or not selected:IsDescendantOf(this.SliderFrame.Parent) then return end
+
+		if navigationKeyCodes[inputObject.KeyCode] == navigateLeft then
+			lastInputDirection = -1
+			setCurrentStep(currentStep - 1)
+		elseif navigationKeyCodes[inputObject.KeyCode] == navigateRight then
+			lastInputDirection = 1
+			setCurrentStep(currentStep + 1)
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(inputObject)
+		if not interactable then return end
+
+		if inputObject.UserInputType ~= Enum.UserInputType.Gamepad1 and inputObject.UserInputType ~= Enum.UserInputType.Keyboard then return end
+		local selected = GuiService.SelectedCoreObject
+		if not selected or not selected:IsDescendantOf(this.SliderFrame.Parent) then return end
+
+		if navigationKeyCodes[inputObject.KeyCode] then --detect any keycode considered a navigation key
+			lastInputDirection = 0
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(inputObject)
+		if not interactable then
+			lastInputDirection = 0
+			return
+		end
+		if not isInTree then
+			lastInputDirection = 0
+			return
+		end
+
+		if inputObject.UserInputType ~= Enum.UserInputType.Gamepad1 then return end
+		local selected = GuiService.SelectedCoreObject
+		if not selected or not selected:IsDescendantOf(this.SliderFrame.Parent) then return end
+		if inputObject.KeyCode ~= Enum.KeyCode.Thumbstick1 then return end
+
+		if inputObject.Position.X > CONTROLLER_THUMBSTICK_DEADZONE and inputObject.Delta.X > 0 and lastInputDirection ~= 1 then
+			lastInputDirection = 1
+			setCurrentStep(currentStep + 1)
+		elseif inputObject.Position.X < -CONTROLLER_THUMBSTICK_DEADZONE and inputObject.Delta.X < 0 and lastInputDirection ~= -1 then
+			lastInputDirection = -1
+			setCurrentStep(currentStep - 1)
+		elseif math.abs(inputObject.Position.X) < CONTROLLER_THUMBSTICK_DEADZONE then
+			lastInputDirection = 0
+		end
+	end)
+
+	local isBound = false
+	GuiService.Changed:Connect(function(prop)
+		if prop ~= "SelectedCoreObject" then return end
+
+		local selected = GuiService.SelectedCoreObject
+		local isThisSelected = selected and selected:IsDescendantOf(this.SliderFrame.Parent)
+		if isThisSelected then
+			modifySelection(0)
+			if not isBound then
+				isBound = true
+				timeAtLastInput = tick()
+				RunService:BindToRenderStep(renderStepBindName, Enum.RenderPriority.Input.Value + 1, stepSliderFunc)
+			end
+		else
+			modifySelection(0.36)
+			if isBound then
+				isBound = false
+				RunService:UnbindFromRenderStep(renderStepBindName)
+			end
+		end
+	end)
+
+	this.SliderFrame.AncestryChanged:Connect(function(child, parent)
+		isInTree = parent
+	end)
+
+	setCurrentStep(currentStep)
+
+	return this
+end
+
+local ROW_HEIGHT = 50
+if isTenFootInterface() then ROW_HEIGHT = 90 end
+
+local nextPosTable = {}
+local function AddNewRow(pageToAddTo, rowDisplayName, selectionType, rowValues, rowDefault, extraSpacing)
+	local nextRowPositionY = 0
+	local isARealRow = selectionType ~= 'TextBox' -- Textboxes are constructed in this function - they don't have an associated class.
+
+	if nextPosTable[pageToAddTo] then
+		nextRowPositionY = nextPosTable[pageToAddTo]
+	end
+
+	local RowFrame = nil
+	RowFrame = Util.Create'ImageButton'
+	{
+		Name = rowDisplayName .. "Frame",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Image = "rbxasset://textures/ui/VR/rectBackgroundWhite.png",
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(2, 2, 18, 18),
+		ImageTransparency = 1,
+		Active = false,
+		AutoButtonColor = false,
+		Size = UDim2.new(1,0,0,ROW_HEIGHT),
+		Position = UDim2.new(0,0,0,nextRowPositionY),
+		ZIndex = 2,
+		Selectable = false,
+		SelectionImageObject = noSelectionObject,
+		Parent = pageToAddTo.Page
+	};
+	RowFrame.ImageColor3 = RowFrame.BackgroundColor3
+
+	if RowFrame and extraSpacing then
+		RowFrame.Position = UDim2.new(RowFrame.Position.X.Scale,RowFrame.Position.X.Offset,
+			RowFrame.Position.Y.Scale,RowFrame.Position.Y.Offset + extraSpacing)
+	end
+
+	local RowLabel = nil
+	RowLabel = Util.Create'TextLabel'
+	{
+		Name = rowDisplayName .. "Label",
+		Text = rowDisplayName,
+		Font = Enum.Font.SourceSansBold,
+		TextSize = 16,
+		TextColor3 = Color3.fromRGB(255,255,255),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0,200,1,0),
+		Position = UDim2.new(0,10,0,0),
+		ZIndex = 2,
+		Parent = RowFrame
+	};
+
+	local RowLabelTextSizeConstraint = Instance.new("UITextSizeConstraint")
+	if FFlagUseNotificationsLocalization then
+		RowLabel.Size = UDim2.new(0.35,0,1,0)
+		RowLabel.TextScaled = true
+		RowLabel.TextWrapped = true
+		RowLabelTextSizeConstraint.Parent = RowLabel
+		RowLabelTextSizeConstraint.MaxTextSize = 16
+	end
+
+	if not isARealRow then
+		RowLabel.Text = ''
+	end
+
+	local function onResized(viewportSize, portrait)
+		if portrait then
+			RowLabel.TextSize = 16
+		else
+			RowLabel.TextSize = isTenFootInterface() and 36 or 24
+		end
+		RowLabelTextSizeConstraint.MaxTextSize = RowLabel.TextSize
+	end
+	onResized(getViewportSize(), isPortrait())
+	addOnResizedCallback(RowFrame, onResized)
+
+	local ValueChangerSelection = nil
+	local ValueChangerInstance = nil
+	if selectionType == "Slider" then
+		ValueChangerInstance = CreateNewSlider(rowValues, rowDefault)
+		ValueChangerInstance.SliderFrame.Parent = RowFrame
+		ValueChangerSelection = ValueChangerInstance.SliderFrame
+	elseif selectionType == "Selector" then
+		ValueChangerInstance = CreateSelector(rowValues, rowDefault)
+		ValueChangerInstance.SelectorFrame.Parent = RowFrame
+		ValueChangerSelection = ValueChangerInstance.SelectorFrame
+	elseif selectionType == "DropDown" then
+		ValueChangerInstance = CreateDropDown(rowValues, rowDefault, pageToAddTo.HubRef)
+		ValueChangerInstance.DropDownFrame.Parent = RowFrame
+		ValueChangerSelection = ValueChangerInstance.DropDownFrame
+	elseif selectionType == "TextBox" then
+		local SelectionOverrideObject = Util.Create'ImageLabel'
+		{
+			Image = "",
+			BackgroundTransparency = 1,
+		};
+
+		ValueChangerInstance = {}
+		ValueChangerInstance.HubRef = nil
+
+		local box = Util.Create'TextBox'
+		{
+			AnchorPoint = Vector2.new(1, 0.5),
+			Size = UDim2.new(0.6,0,1,0),
+			Position = UDim2.new(1,0,0.5,0),
+			Text = rowDisplayName,
+			TextColor3 = Color3.fromRGB(49, 49, 49),
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextWrapped = true,
+			Font = Enum.Font.SourceSans,
+			TextSize = 24,
+			ZIndex = 2,
+			SelectionImageObject = SelectionOverrideObject,
+			ClearTextOnFocus = false,
+			Parent = RowFrame
+		};
+		ValueChangerSelection = box
+
+		box.Focused:Connect(function()
+			if usesSelectedObject() then
+				GuiService.SelectedCoreObject = box
+			end
+
+			if box.Text == rowDisplayName then
+				box.Text = ""
+			end
+		end)
+		if extraSpacing then
+			box.Position = UDim2.new(box.Position.X.Scale,box.Position.X.Offset,
+				box.Position.Y.Scale,box.Position.Y.Offset + extraSpacing)
+		end
+
+		ValueChangerSelection.SelectionGained:Connect(function()
+			if usesSelectedObject() then
+				box.BackgroundTransparency = 0.1
+
+				if ValueChangerInstance.HubRef then
+					ValueChangerInstance.HubRef:ScrollToFrame(ValueChangerSelection)
+				end
+			end
+		end)
+		ValueChangerSelection.SelectionLost:Connect(function()
+			if usesSelectedObject() then
+				box.BackgroundTransparency = 0.5
+			end
+		end)
+
+		local setRowSelection = function()
+			local fullscreenDropDown = CoreGui.RobloxGui:FindFirstChild("DropDownFullscreenFrame")
+			if fullscreenDropDown and fullscreenDropDown.Visible then return end
+
+			local valueFrame = ValueChangerSelection
+
+			if valueFrame and valueFrame.Visible and valueFrame.ZIndex > 1 and usesSelectedObject() and pageToAddTo.Active then
+				GuiService.SelectedCoreObject = valueFrame
+			end
+		end
+		local function processInput(input)
+			if input.UserInputState == Enum.UserInputState.Begin then
+				if input.KeyCode == Enum.KeyCode.Return then
+					if GuiService.SelectedCoreObject == ValueChangerSelection then
+						box:CaptureFocus()
+					end
+				end
+			end
+		end
+		box.MouseEnter:Connect(setRowSelection)
+
+		UserInputService.InputBegan:Connect(processInput)
+
+	elseif selectionType == "TextEntry" then
+		local SelectionOverrideObject = Util.Create'ImageLabel'
+		{
+			Image = "",
+			BackgroundTransparency = 1,
+		};
+
+		ValueChangerInstance = {}
+		ValueChangerInstance.HubRef = nil
+
+		local box = Util.Create'TextBox'
+		{
+			AnchorPoint = Vector2.new(1, 0.5),
+			Size = UDim2.new(0.4,-10,0,40),
+			Position = UDim2.new(1,0,0.5,0),
+			Text = rowDisplayName,
+			TextColor3 = Color3.fromRGB(178, 178, 178),
+			BackgroundTransparency = 1.0,
+			BorderSizePixel = 0,
+			TextYAlignment = Enum.TextYAlignment.Center,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			TextWrapped = false,
+			Font = Enum.Font.SourceSans,
+			TextSize = 24,
+			ZIndex = 2,
+			SelectionImageObject = SelectionOverrideObject,
+			ClearTextOnFocus = false,
+			Parent = RowFrame
+		};
+		ValueChangerSelection = box
+
+		box.Focused:Connect(function()
+			if usesSelectedObject() then
+				GuiService.SelectedCoreObject = box
+			end
+
+			if box.Text == rowDisplayName then
+				box.Text = ""
+			end
+		end)
+		if extraSpacing then
+			box.Position = UDim2.new(box.Position.X.Scale,box.Position.X.Offset,
+				box.Position.Y.Scale,box.Position.Y.Offset + extraSpacing)
+		end
+
+		ValueChangerSelection.SelectionGained:Connect(function()
+			if usesSelectedObject() then
+				box.BackgroundTransparency = 0.8
+
+				if ValueChangerInstance.HubRef then
+					ValueChangerInstance.HubRef:ScrollToFrame(ValueChangerSelection)
+				end
+			end
+		end)
+		ValueChangerSelection.SelectionLost:Connect(function()
+			if usesSelectedObject() then
+				box.BackgroundTransparency = 1.0
+			end
+		end)
+
+		local setRowSelection = function()
+			local fullscreenDropDown = CoreGui.RobloxGui:FindFirstChild("DropDownFullscreenFrame")
+			if fullscreenDropDown and fullscreenDropDown.Visible then return end
+
+			local valueFrame = ValueChangerSelection
+
+			if valueFrame and valueFrame.Visible and valueFrame.ZIndex > 1 and usesSelectedObject() and pageToAddTo.Active then
+				GuiService.SelectedCoreObject = valueFrame
+			end
+		end
+		local function processInput(input)
+			if input.UserInputState == Enum.UserInputState.Begin then
+				if input.KeyCode == Enum.KeyCode.Return then
+					if GuiService.SelectedCoreObject == ValueChangerSelection then
+						box:CaptureFocus()
+					end
+				end
+			end
+		end
+		RowFrame.MouseEnter:Connect(setRowSelection)
+
+		function ValueChangerInstance:SetZIndex(newZIndex)
+			box.ZIndex = newZIndex
+		end
+
+		function ValueChangerInstance:SetInteractable(interactable)
+			box.Selectable = interactable
+			if not interactable then
+				box.TextColor3 = Color3.fromRGB(49,49,49)
+				box.ZIndex = 1
+			else
+				box.TextColor3 = Color3.fromRGB(178,178,178)
+				box.ZIndex = 2
+			end
+		end
+
+		function ValueChangerInstance:SetValue(value) -- should this do more?
+			box.Text = value
+		end
+
+		local valueChangedEvent = Instance.new("BindableEvent")
+		valueChangedEvent.Name = "ValueChanged"
+
+		box.FocusLost:Connect(function()
+			valueChangedEvent:Fire(box.Text)
+		end)
+
+		ValueChangerInstance.ValueChanged = valueChangedEvent.Event
+
+		UserInputService.InputBegan:Connect(processInput)
+	end
+
+	ValueChangerInstance.Name = rowDisplayName .. "ValueChanger"
+
+	local SetAutoLocalizeBase = ValueChangerInstance.SetAutoLocalize
+	ValueChangerInstance.SetAutoLocalize = function(self, autoLocalize)
+		RowFrame.AutoLocalize = autoLocalize
+		if SetAutoLocalizeBase then
+			SetAutoLocalizeBase(self, autoLocalize)
+		end
+	end
+
+	nextRowPositionY = nextRowPositionY + ROW_HEIGHT
+	if extraSpacing then
+		nextRowPositionY = nextRowPositionY + extraSpacing
+	end
+
+	nextPosTable[pageToAddTo] = nextRowPositionY
+
+	if isARealRow then
+		local setRowSelection = function()
+			local fullscreenDropDown = CoreGui.RobloxGui:FindFirstChild("DropDownFullscreenFrame")
+			if fullscreenDropDown and fullscreenDropDown.Visible then return end
+
+			local valueFrame = ValueChangerInstance.SliderFrame
+			if not valueFrame then
+				valueFrame = ValueChangerInstance.SliderFrame
+			end
+			if not valueFrame then
+				valueFrame = ValueChangerInstance.DropDownFrame
+			end
+			if not valueFrame then
+				valueFrame = ValueChangerInstance.SelectorFrame
+			end
+
+			if valueFrame and valueFrame.Visible and valueFrame.ZIndex > 1 and usesSelectedObject() and pageToAddTo.Active then
+				GuiService.SelectedCoreObject = valueFrame
+			end
+		end
+		RowFrame.MouseEnter:Connect(setRowSelection)
+
+		--Could this be cleaned up even more?
+		local function onVREnabled(prop)
+			if prop == "VREnabled" then
+				if VRService.VREnabled then
+					RowFrame.Selectable = true
+					RowFrame.Active = true
+					ValueChangerSelection.Active = true
+					GuiService.Changed:Connect(function(prop)
+						if prop == "SelectedCoreObject" then
+							local selected = GuiService.SelectedCoreObject
+							if selected and (selected == RowFrame or selected:IsDescendantOf(RowFrame)) then
+								RowFrame.ImageTransparency = 0.5
+								RowFrame.BackgroundTransparency = 1
+							else
+								RowFrame.ImageTransparency = 1
+								RowFrame.BackgroundTransparency = 1
+							end
+						end
+					end)
+				else
+					RowFrame.Selectable = false
+					RowFrame.Active = false
+				end
+			end
+		end
+		VRService.Changed:Connect(onVREnabled)
+		onVREnabled("VREnabled")
+
+		ValueChangerSelection.SelectionGained:Connect(function()
+			if usesSelectedObject() then
+				if VRService.VREnabled then
+					RowFrame.ImageTransparency = 0.5
+					RowFrame.BackgroundTransparency = 1
+				else
+					RowFrame.ImageTransparency = 1
+					RowFrame.BackgroundTransparency = 0.5
+				end
+
+				if ValueChangerInstance.HubRef then
+					ValueChangerInstance.HubRef:ScrollToFrame(RowFrame)
+				end
+			end
+		end)
+		ValueChangerSelection.SelectionLost:Connect(function()
+			if usesSelectedObject() then
+				RowFrame.ImageTransparency = 1
+				RowFrame.BackgroundTransparency = 1
+			end
+		end)
+	end
+
+	pageToAddTo:AddRow(RowFrame, RowLabel, ValueChangerInstance, extraSpacing, false)
+
+	ValueChangerInstance.Selection = ValueChangerSelection
+
+	return RowFrame, RowLabel, ValueChangerInstance
+end
+
+local function AddNewRowObject(pageToAddTo, rowDisplayName, rowObject, extraSpacing)
+	local nextRowPositionY = 0
+
+	if nextPosTable[pageToAddTo] then
+		nextRowPositionY = nextPosTable[pageToAddTo]
+	end
+
+	local RowFrame = Util.Create'ImageButton'
+	{
+		Name = rowDisplayName .. "Frame",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Image = "rbxasset://textures/ui/VR/rectBackgroundWhite.png",
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(10,10,10,10),
+		ImageTransparency = 1,
+		Active = false,
+		AutoButtonColor = false,
+		Size = UDim2.new(1,0,0,ROW_HEIGHT),
+		Position = UDim2.new(0,0,0,nextRowPositionY),
+		ZIndex = 2,
+		Selectable = false,
+		SelectionImageObject = noSelectionObject,
+		Parent = pageToAddTo.Page
+	};
+	RowFrame.ImageColor3 = RowFrame.BackgroundColor3
+	RowFrame.SelectionGained:Connect(function()
+		RowFrame.BackgroundTransparency = 0.5
+	end)
+	RowFrame.SelectionLost:Connect(function()
+		RowFrame.BackgroundTransparency = 1
+	end)
+
+	local RowLabel = Util.Create'TextLabel'
+	{
+		Name = rowDisplayName .. "Label",
+		Text = rowDisplayName,
+		Font = Enum.Font.SourceSansBold,
+		TextSize = 16,
+		TextColor3 = Color3.fromRGB(255,255,255),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0,200,1,0),
+		Position = UDim2.new(0,10,0,0),
+		ZIndex = 2,
+		Parent = RowFrame
+	};
+	local function onResized(viewportSize, portrait)
+		if portrait then
+			RowLabel.TextSize = 16
+		else
+			RowLabel.TextSize = isTenFootInterface() and 36 or 24
+		end
+	end
+	addOnResizedCallback(RowFrame, onResized)
+
+	if extraSpacing then
+		RowFrame.Position = UDim2.new(RowFrame.Position.X.Scale,RowFrame.Position.X.Offset,
+			RowFrame.Position.Y.Scale,RowFrame.Position.Y.Offset + extraSpacing)
+	end
+
+	nextRowPositionY = nextRowPositionY + ROW_HEIGHT
+	if extraSpacing then
+		nextRowPositionY = nextRowPositionY + extraSpacing
+	end
+
+	nextPosTable[pageToAddTo] = nextRowPositionY
+
+	local setRowSelection = function()
+		if RowFrame.Visible then
+			GuiService.SelectedCoreObject = RowFrame
+		end
+	end
+	RowFrame.MouseEnter:Connect(setRowSelection)
+
+	rowObject.SelectionImageObject = noSelectionObject
+
+	rowObject.SelectionGained:Connect(function()
+		if VRService.VREnabled then
+			RowFrame.ImageTransparency = 0.5
+			RowFrame.BackgroundTransparency = 1
+		else
+			RowFrame.ImageTransparency = 1
+			RowFrame.BackgroundTransparency = 0.5
+		end
+	end)
+	rowObject.SelectionLost:Connect(function()
+		RowFrame.ImageTransparency = 1
+		RowFrame.BackgroundTransparency = 1
+	end)
+
+	rowObject.Parent = RowFrame
+
+	pageToAddTo:AddRow(RowFrame, RowLabel, rowObject, extraSpacing, true)
+	return RowFrame
+end
+
+-------- public facing API ----------------
+local moduleApiTable = {}
+
+function moduleApiTable:Create(instanceType)
+	return function(data)
+		local obj = Instance.new(instanceType)
+		local parent = nil
+		for k, v in pairs(data) do
+			if type(k) == 'number' then
+				v.Parent = obj
+			elseif k == 'Parent' then
+				parent = v
+			else
+				obj[k] = v
+			end
+		end
+		if parent then
+			obj.Parent = parent
+		end
+		return obj
+	end
+end
+
+-- RayPlaneIntersection (shortened)
+-- http://www.siggraph.org/education/materials/HyperGraph/raytrace/rayplane_intersection.htm
+function moduleApiTable:RayPlaneIntersection(ray, planeNormal, pointOnPlane)
+	planeNormal = planeNormal.unit
+	ray = ray.Unit
+
+	local Vd = planeNormal:Dot(ray.Direction)
+	if Vd == 0 then -- parallel, no intersection
+		return nil
+	end
+
+	local V0 = planeNormal:Dot(pointOnPlane - ray.Origin)
+	local t = V0 / Vd
+	if t < 0 then --plane is behind ray origin, and thus there is no intersection
+		return nil
+	end
+
+	return ray.Origin + ray.Direction * t
+end
+
+function moduleApiTable:GetEaseLinear()
+	return Linear
+end
+function moduleApiTable:GetEaseOutQuad()
+	return EaseOutQuad
+end
+function moduleApiTable:GetEaseInOutQuad()
+	return EaseInOutQuad
+end
+
+function moduleApiTable:CreateNewSlider(numOfSteps, startStep, minStep)
+	return CreateNewSlider(numOfSteps, startStep, minStep)
+end
+
+function moduleApiTable:CreateNewSelector(selectionStringTable, startPosition)
+	return CreateSelector(selectionStringTable, startPosition)
+end
+
+function moduleApiTable:CreateNewDropDown(dropDownStringTable, startPosition)
+	return CreateDropDown(dropDownStringTable, startPosition, nil)
+end
+
+function moduleApiTable:AddNewRow(pageToAddTo, rowDisplayName, selectionType, rowValues, rowDefault, extraSpacing)
+	return AddNewRow(pageToAddTo, rowDisplayName, selectionType, rowValues, rowDefault, extraSpacing)
+end
+
+function moduleApiTable:AddNewRowObject(pageToAddTo, rowDisplayName, rowObject, extraSpacing)
+	return AddNewRowObject(pageToAddTo, rowDisplayName, rowObject, extraSpacing)
+end
+
+function moduleApiTable:ShowAlert(alertMessage, okButtonText, settingsHub, okPressedFunc, hasBackground)
+	ShowAlert(alertMessage, okButtonText, settingsHub, okPressedFunc, hasBackground)
+end
+
+function moduleApiTable:IsSmallTouchScreen()
+	return isSmallTouchScreen()
+end
+
+function moduleApiTable:IsPortrait()
+	return isPortrait()
+end
+
+function moduleApiTable:MakeStyledButton(name, text, size, clickFunc, pageRef, hubRef)
+	return MakeButton(name, text, size, clickFunc, pageRef, hubRef)
+end
+
+function moduleApiTable:MakeStyledImageButton(name, image, size, imageSize, clickFunc, pageRef, hubRef)
+	return MakeImageButton(name, image, size, imageSize, clickFunc, pageRef, hubRef)
+end
+
+function moduleApiTable:AddButtonRow(pageToAddTo, name, text, size, clickFunc, hubRef)
+	return AddButtonRow(pageToAddTo, name, text, size, clickFunc, hubRef)
+end
+
+function moduleApiTable:CreateSignal()
+	return CreateSignal()
+end
+
+function  moduleApiTable:UsesSelectedObject()
+	return usesSelectedObject()
+end
+
+function moduleApiTable:TweenProperty(instance, prop, start, final, duration, easingFunc, cbFunc)
+	return PropertyTweener(instance, prop, start, final, duration, easingFunc, cbFunc)
+end
+
+function moduleApiTable:OnResized(key, callback)
+	return addOnResizedCallback(key, callback)
+end
+
+function moduleApiTable:FireOnResized()
+	local newSize = getViewportSize()
+	local portrait = moduleApiTable:IsPortrait()
+
+	for key, callback in pairs(onResizedCallbacks) do
+		callback(newSize, portrait)
+	end
+end
+
+-- Returns an interpolation between position0 and position1.
+--	Returns position0 when t = 0, and position1 when t = 1.
+function moduleApiTable:Lerp(t, position0, position1)
+	return (1 - t) * position0 + t * position1
+end
+
+-- Returns a rounded number
+function moduleApiTable:Round(n)
+	return n % 1 >= 0.5 and math.ceil(n) or math.floor(n)
+end
+
+function moduleApiTable:IsExperienceOlderThanOneWeek(gameInfo)
+	if gameInfo ~= nil and gameInfo.Created ~= nil then
+		local dateTime = DateTime.fromIsoDate(gameInfo.Created)
+		local createdDateUnixMillis = dateTime.UnixTimestampMillis
+		local currDateUnixMillis = Workspace:GetServerTimeNow() * MILLISECONDS_PER_SECOND
+
+		if currDateUnixMillis - createdDateUnixMillis > MILLISECONDS_PER_WEEK then
+			return true
+		end
+	end
+
+	return false
+end
+
+
+return moduleApiTable
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
+          <string name="Name">VRUtil</string>
+          <string name="Source"><![CDATA[--!nonstrict
+--Modules/VR/VRUtil.lua
+
+local VRService = game:GetService("VRService")
+
+local VRUtil = {}
+
+function VRUtil.GetUserCFrameWorldSpace(userCFrameType)
+	local userCFrame = VRService:GetUserCFrame(userCFrameType)
+
+	if not (workspace.CurrentCamera :: Camera).HeadLocked then
+		local headCFrame = VRService:GetUserCFrame(Enum.UserCFrame.Head)
+		userCFrame = headCFrame:Inverse() * userCFrame
+	end
+
+	return (workspace.CurrentCamera :: Camera).CFrame * (CFrame.new(userCFrame.p * (workspace.CurrentCamera :: Camera).HeadScale) * (userCFrame - userCFrame.p))
+end
+
+return VRUtil
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+</roblox>
