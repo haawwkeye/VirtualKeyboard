@@ -1185,7 +1185,7 @@ local function ConstructKeyboardUI(keyboardLayoutDefinitions)
 		panel:ForceShowUntilLookedAt()
 		
 		-- Taken from NexusVRCore BaseScreenGui and ScreenGui3D
-		local Easing = 0.15;
+		local Easing = 0;--0.15;
 		local LastRotation = CFrame.new();
 		local Depth = 5;
 		
