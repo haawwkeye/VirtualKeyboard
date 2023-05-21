@@ -504,7 +504,7 @@ local function CreateKeyboardKey(keyboard, layoutData, keyData)
 		elseif currentKeySetting == 'Caps' then
 			keyboard:SetCaps(not keyboard:GetCaps())
 		elseif currentKeySetting == 'Enter' then
-			keyboard:SubmitText(true, true)
+			keyboard:SubmitText(true, false)
 		elseif currentKeySetting == 'Delete' then
 			keyboard:BackspaceAtCursor()
 		elseif currentKeySetting == "123/sym" then
@@ -1185,16 +1185,15 @@ local function ConstructKeyboardUI(keyboardLayoutDefinitions)
 		panel:ForceShowUntilLookedAt()
 		
 		-- Taken from NexusVRCore BaseScreenGui and ScreenGui3D
-		local Easing = 0;
+		local Easing = 0.15;
 		local LastRotation = CFrame.new();
-		local RotationOffset = CFrame.new();
 		local Depth = 5;
 		
 		function panel:PreUpdate(cameraCF : CFrame, cameraRenderCF : CFrame, userHeadCF : CFrame, lookRay : Ray, DeltaTime)
 			DeltaTime = DeltaTime or self.Easing
 			
 			--Update the rotation.
-			local TargetCFrame = CFrame.new(lookRay.Direction*1.5) * CFrame.new(Vector3.new(0,panel.height * 0.65,0));
+			local TargetCFrame = CFrame.new(Vector3.new(0, 0, -(panel.height * panel.width) * 0.35));
 			if Easing == 0 then
 				LastRotation = TargetCFrame
 			else
@@ -1202,7 +1201,7 @@ local function ConstructKeyboardUI(keyboardLayoutDefinitions)
 			end
 			
 			--Set the CFrame
-			panel:SetType(Panel3D.Type.NewStandard, { CFrame = LastRotation * RotationOffset; })
+			panel:SetType(Panel3D.Type.FixedToHead, { CFrame = LastRotation; })
 		end
 
 		openedEvent:Fire()
