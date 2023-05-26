@@ -491,7 +491,7 @@ local function CreateKeyboardKey(keyboard, layoutData, keyData)
 				icon.Position = UDim2.new(0.5,-icon.AbsoluteSize.X/2,0.5,-icon.AbsoluteSize.Y/2);
 			end
 		end
-		icon.Changed:connect(onChanged)
+		icon.Changed:Connect(onChanged)
 		onChanged('AbsoluteSize')
 	end
 
@@ -619,22 +619,22 @@ local function CreateKeyboardKey(keyboard, layoutData, keyData)
 		return newKeyElement
 	end)
 
-	newKeyElement.MouseButton1Down:connect(function() newKey:OnDown() end)
-	newKeyElement.MouseButton1Up:connect(function() newKey:OnUp() end)
-	newKeyElement.SelectionGained:connect(function() hoveringGuiElements[newKeyElement] = true newKey:OnEnter() end)
-	newKeyElement.SelectionLost:connect(function() hoveringGuiElements[newKeyElement] = nil newKey:OnLeave() end)
+	newKeyElement.MouseButton1Down:Connect(function() newKey:OnDown() end)
+	newKeyElement.MouseButton1Up:Connect(function() newKey:OnUp() end)
+	newKeyElement.SelectionGained:Connect(function() hoveringGuiElements[newKeyElement] = true newKey:OnEnter() end)
+	newKeyElement.SelectionLost:Connect(function() hoveringGuiElements[newKeyElement] = nil newKey:OnLeave() end)
 	-- For the time being, we will simulate onClick events in the OnDown() event
-	-- newKeyElement.MouseButton1Click:connect(function() onClicked() end)
+	-- newKeyElement.MouseButton1Click:Connect(function() onClicked() end)
 	if secondBackgroundImage then
 		-- For the time being, we will simulate onClick events in the OnDown() event
-		-- secondBackgroundImage.MouseButton1Click:connect(onClicked)
-		secondBackgroundImage.MouseButton1Down:connect(function() newKey:OnDown() end)
-		secondBackgroundImage.MouseButton1Up:connect(function() newKey:OnUp() end)
-		secondBackgroundImage.SelectionGained:connect(function()
+		-- secondBackgroundImage.MouseButton1Click:Connect(onClicked)
+		secondBackgroundImage.MouseButton1Down:Connect(function() newKey:OnDown() end)
+		secondBackgroundImage.MouseButton1Up:Connect(function() newKey:OnUp() end)
+		secondBackgroundImage.SelectionGained:Connect(function()
 			hoveringGuiElements[secondBackgroundImage] = true
 			newKey:OnEnter()
 		end)
-		secondBackgroundImage.SelectionLost:connect(function()
+		secondBackgroundImage.SelectionLost:Connect(function()
 			hoveringGuiElements[secondBackgroundImage] = nil
 			newKey:OnLeave()
 		end)
@@ -1114,12 +1114,12 @@ local function ConstructKeyboardUI(keyboardLayoutDefinitions)
 
 		disconnectKeyboardEvents()
 		if options.TextBox then
-			textChangedConn = options.TextBox.Changed:connect(function(prop)
+			textChangedConn = options.TextBox.Changed:Connect(function(prop)
 				if prop == 'Text' then
 					UpdateTextEntryFieldText(options.TextBox.Text)
 				end
 			end)
-			textBoxFocusLostConn = options.TextBox.FocusLost:connect(function(submitted)
+			textBoxFocusLostConn = options.TextBox.FocusLost:Connect(function(submitted)
 				--if not ignoreFocusedLost then
 				if submitted == true then
 					self:Close(submitted)
@@ -1134,7 +1134,7 @@ local function ConstructKeyboardUI(keyboardLayoutDefinitions)
 			-- Find panel for 2d ui?
 			local textboxPanel = Panel3D.FindContainerOf(options.TextBox)
 			if textboxPanel then
-				panelClosedConn = Panel3D.OnPanelClosed.Event:connect(function(closedPanelName)
+				panelClosedConn = Panel3D.OnPanelClosed.Event:Connect(function(closedPanelName)
 					if closedPanelName == textboxPanel.name then
 						self:Close(false)
 					end
@@ -1352,15 +1352,15 @@ local function ConstructKeyboardUI(keyboardLayoutDefinitions)
 		newKeyboard:SetCurrentKeyset(1)
 	end
 
-	textEntryField.MouseButton1Click:connect(function()
+	textEntryField.MouseButton1Click:Connect(function()
 		SetTextFieldCursorPosition(calculateTextCursorPosition(panel.lookAtPixel.X, panel.lookAtPixel.Y))
 	end)
 
-	closeButton.MouseButton1Click:connect(function()
+	closeButton.MouseButton1Click:Connect(function()
 		newKeyboard:Close(false)
 	end)
 
-	voiceDoneButton.MouseButton1Click:connect(function()
+	voiceDoneButton.MouseButton1Click:Connect(function()
 		if VoiceToTextFSM:GetCurrentState().Name == "Listening" then
 			VoiceToTextFSM:TransitionState(CreateProcessingVoiceState())
 		end
@@ -1394,7 +1394,7 @@ local function ConstructKeyboardUI(keyboardLayoutDefinitions)
 			newKeyboard:SetVoiceMode(false)
 		end
 	end
-	VoiceToTextFSM.StateTransitionedEvent:connect(onVoiceProcessingStateChanged)
+	VoiceToTextFSM.StateTransitionedEvent:Connect(onVoiceProcessingStateChanged)
 	onVoiceProcessingStateChanged(VoiceToTextFSM:GetCurrentState())
 
 
@@ -1447,7 +1447,7 @@ VirtualKeyboardClass.ClosedEvent = GetKeyboard().ClosedEvent
 
 
 if VirtualKeyboardPlatform then
-	UserInputService.TextBoxFocused:connect(function(textbox)
+	UserInputService.TextBoxFocused:Connect(function(textbox)
 		VirtualKeyboardClass:ShowVirtualKeyboard(VirtualKeyboardClass:CreateVirtualKeyboardOptions(textbox))
 	end)
 	-- Don't have to hook up to TextBoxFocusReleased because we are already listening to that in keyboard
